@@ -1,0 +1,15 @@
+# vLLM Dockerfile for 2 GPUs (Scenario B - Tensor Parallelism)
+FROM vllm/vllm-openai:v0.3.3
+
+ENV CUDA_VISIBLE_DEVICES=0,1
+ENV VLLM_TENSOR_PARALLEL_SIZE=2
+ENV MODEL_PATH=/models
+ENV MAX_MODEL_LEN=4096
+ENV GPU_MEMORY_UTILIZATION=0.90
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8000
+
+ENTRYPOINT ["/entrypoint.sh"]

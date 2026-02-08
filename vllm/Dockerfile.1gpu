@@ -1,0 +1,17 @@
+# vLLM Dockerfile for 1 GPU (Scenario A)
+FROM vllm/vllm-openai:v0.3.3
+
+# Environment variables (set in docker-compose)
+ENV CUDA_VISIBLE_DEVICES=0
+ENV VLLM_TENSOR_PARALLEL_SIZE=1
+ENV MODEL_PATH=/models
+ENV MAX_MODEL_LEN=4096
+ENV GPU_MEMORY_UTILIZATION=0.90
+
+# Copy entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8000
+
+ENTRYPOINT ["/entrypoint.sh"]

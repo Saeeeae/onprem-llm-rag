@@ -1,0 +1,81 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment
+.env
+.env.local
+.venv
+venv/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Docker
+docker-compose.override.yml
+
+# Node
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database & Data Volumes
+*.db
+*.sqlite
+postgres_data/
+redis_data/
+qdrant_data/
+backend_logs/
+worker_logs/
+beat_schedule/
+
+# Model Caches (Large files)
+model_cache/
+embeddings_cache/
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+flower.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Legacy Code Backup
+legacy/

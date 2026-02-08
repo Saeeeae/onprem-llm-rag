@@ -1,0 +1,12 @@
+# Chunking Dependencies
+langchain==0.1.0
+langchain-text-splitters==0.0.1
+tiktoken==0.5.2
+
+# API Server
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+
+# Utilities
+python-dotenv==1.0.0
