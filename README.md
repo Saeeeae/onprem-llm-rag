@@ -119,6 +119,133 @@ The PostgreSQL schema is automatically initialized on first run.
 - **API Docs**: http://localhost:8000/docs
 - **Flower (Celery Monitor)**: http://localhost:5555 (dev profile only)
 
+## 💻 Development Setup
+
+### For Developers: Hot-Reload Environment
+
+This project supports a complete development workflow with hot-reload, debugging, and real-time code changes without rebuilding containers.
+
+#### 1. Set Up Development Environment
+
+```bash
+# Copy environment file
+cp .env.example .env
+
+# Copy development override file
+cp docker-compose.override.example.yml docker-compose.override.yml
+
+# (Optional) Customize your local override file
+nano docker-compose.override.yml
+```
+
+#### 2. Start Development Services
+
+```bash
+# Build and start all services in development mode
+docker compose up -d
+
+# Watch logs (hot-reload messages will appear here)
+docker compose logs -f backend frontend
+```
+
+#### 3. Development Features
+
+**Hot-Reload Enabled:**
+- ✅ **Backend**: Code changes in `backend/app/` automatically reload uvicorn
+- ✅ **Frontend**: Next.js Fast Refresh for instant updates
+- ✅ **Worker**: Celery tasks reload on restart
+- ✅ **AI Services**: Python services reload on file changes
+
+**Debug Ports Exposed:**
+| Service | Debug Port | Purpose |
+|---------|-----------|---------|
+| Backend | 5678 | debugpy remote debugging |
+| OCR Service | 5679 | debugpy remote debugging |
+| Embedding Service | 5680 | debugpy remote debugging |
+| Chunking Service | 5681 | debugpy remote debugging |
+
+**Volume Mounts:**
+- Source code is mounted from host → changes reflect immediately
+- Dependencies remain in container → fast startup
+
+#### 4. Attach Debugger (VSCode)
+
+Add to `.vscode/launch.json`:
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Backend Remote Debug",
+      "type": "python",
+      "request": "attach",
+      "connect": {
+        "host": "localhost",
+        "port": 5678
+      },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}/backend/app",
+          "remoteRoot": "/app/app"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Usage:**
+1. Set breakpoint in `backend/app/main.py`
+2. Press F5 in VSCode
+3. Make API request → debugger pauses at breakpoint
+
+#### 5. Run Tests Inside Containers
+
+```bash
+# Backend tests
+docker compose exec backend pytest
+
+# Frontend tests
+docker compose exec frontend npm test
+
+# Worker tests
+docker compose exec celery_worker pytest
+```
+
+#### 6. Rebuild After Dependency Changes
+
+```bash
+# Only rebuild when requirements.txt or package.json changes
+docker compose build backend
+docker compose up -d backend
+
+# Or rebuild all services
+docker compose build
+docker compose up -d
+```
+
+#### 7. Switch to Production Mode
+
+```bash
+# Remove development override
+rm docker-compose.override.yml
+
+# Production build (default)
+docker compose up -d
+```
+
+### Development vs Production
+
+| Aspect | Development | Production |
+|--------|------------|-----------|
+| **Target** | `development` stage | `production` stage |
+| **Hot-Reload** | ✅ Enabled | ❌ Disabled |
+| **Debug Tools** | ✅ debugpy, pytest, ipdb | ❌ Not included |
+| **Workers** | 1 (easier debugging) | 4 (performance) |
+| **Logging** | DEBUG level | INFO level |
+| **User** | root (flexibility) | non-root (security) |
+| **Image Size** | Larger (+200MB) | Optimized |
+
 ## 📁 Project Structure
 
 ```
@@ -346,7 +473,7 @@ watch -n 1 nvidia-smi
 **Solution**: Reduce `GPU_MEMORY_UTILIZATION` or `MAX_MODEL_LEN`
 
 ### Issue: Slow RAG responses
-**Solution**: 
+**Solution**:
 - Check GPU utilization (`nvidia-smi`)
 - Increase vLLM `MAX_NUM_SEQS`
 - Enable caching in Redis
@@ -369,6 +496,63 @@ docker compose exec postgres pg_isready
 
 # Restart database
 docker compose restart postgres
+```
+
+### Development: Hot-reload not working
+**Solution**:
+```bash
+# 1. Check volume mounts are correct
+docker compose config | grep volumes -A 5
+
+# 2. Verify file permissions
+ls -la backend/app/
+
+# 3. Force recreate container
+docker compose up -d --force-recreate backend
+
+# 4. Check logs for reload messages
+docker compose logs backend | grep -i reload
+```
+
+### Development: Debugger won't connect
+**Solution**:
+```bash
+# 1. Verify debug port is exposed
+docker compose ps | grep backend
+
+# 2. Check if debugpy is running
+docker compose logs backend | grep debugpy
+
+# 3. Ensure development target is used
+docker compose config | grep target
+
+# 4. Rebuild with development target
+docker compose build --no-cache backend
+docker compose up -d backend
+```
+
+### Development: Port conflicts
+**Solution**:
+```bash
+# Edit docker-compose.override.yml to change ports
+services:
+  backend:
+    ports:
+      - "8001:8000"  # Change host port to 8001
+      - "5679:5678"  # Change debugpy port to 5679
+```
+
+### Development: Out of disk space
+**Solution**:
+```bash
+# Remove unused Docker images
+docker system prune -a --volumes
+
+# Remove only development images
+docker images | grep development | awk '{print $3}' | xargs docker rmi
+
+# Check disk usage
+docker system df
 ```
 
 ## 📚 API Documentation
