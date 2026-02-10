@@ -36,7 +36,7 @@
 │              ▼                             ▼                      ▼    │
 │  ┌───────────────────┐        ┌────────────────────┐  ┌──────────────┐│
 │  │  vLLM Service     │        │  Qdrant Vector DB  │  │ PostgreSQL   ││
-│  │  (Port: 8001)     │        │  (Port: 6333)      │  │ (Port: 5432) ││
+│  │  (Port: 8080)     │        │  (Port: 6333)      │  │ (Port: 5432) ││
 │  │                   │        │                    │  │              ││
 │  │  GPU Scenarios:   │        │  - Embeddings      │  │  - Users     ││
 │  │  A: 1 GPU (TP=1)  │        │  - Metadata        │  │  - Audit Logs││
@@ -47,8 +47,20 @@
 │  │    Batching       │                                                 │
 │  │  - PagedAttention │                                                 │
 │  └───────────────────┘                                                 │
+│                                                                         │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │              AI Microservices (shared/ module)                     │  │
+│  │                                                                    │  │
+│  │  ┌──────────────────┐  ┌──────────────────┐                      │  │
+│  │  │ GLM-OCR (8001)   │  │ E5 Embed (8002)  │                      │  │
+│  │  │ Image→Text (GPU) │  │ Text→Vec  (GPU)  │                      │  │
+│  │  └──────────────────┘  └──────────────────┘                      │  │
+│  │  ┌──────────────────┐  ┌──────────────────┐                      │  │
+│  │  │ Chunking (8003)  │  │ Reranker (8004)  │                      │  │
+│  │  │ Text Split (CPU) │  │ BGE v2 m3 (GPU)  │                      │  │
+│  │  └──────────────────┘  └──────────────────┘                      │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
 │              ▲                                                          │
-│              │                                                          │
 │              │                                                          │
 │  ┌───────────┴──────────────────────────────────────────────────────┐  │
 │  │                    Redis + Celery Workers                         │  │
@@ -84,15 +96,19 @@
 
 ### 2.1 User Query Flow (RAG)
 ```
-User → Next.js → FastAPI → [RBAC Check] → Qdrant (Vector Search + Filter)
-                                        ↓
-                                   [Retrieved Docs]
-                                        ↓
-                               vLLM (LLM Generation)
-                                        ↓
-                               [Response + Citations]
-                                        ↓
-                            PostgreSQL (Audit Log) → User
+User → Next.js → FastAPI → [RBAC Check]
+                                ↓
+                     E5 Embedding (8002) → Query Vector
+                                ↓
+                     Qdrant (Vector Search + RBAC Filter, top_k=20)
+                                ↓
+                     Reranker (8004) → Re-score & rank (top_k=5)
+                                ↓
+                     vLLM (8080) → LLM Generation with Context
+                                ↓
+                     [Response + Citations]
+                                ↓
+                     PostgreSQL (Audit Log) → User
 ```
 
 ### 2.2 Document Processing Flow
@@ -101,16 +117,50 @@ NAS Directory → Celery Beat (Scheduled) → Celery Worker
                                               ↓
                                       [File Change Detection]
                                               ↓
-                                      [OCR + Text Extraction]
+                                      GLM-OCR (8001) → Text Extraction
                                               ↓
-                                      [Chunking + Embedding]
+                                      Chunking (8003) → Hybrid Text Splitting
                                               ↓
-                                      Qdrant (Upsert with Metadata)
+                                      E5 Embedding (8002) → Vector Embeddings
+                                              ↓
+                                      Qdrant (Upsert with RBAC Metadata)
                                               ↓
                                       PostgreSQL (Log Entry)
 ```
 
-## 3. GPU Deployment Strategies (NVIDIA L40S 48GB)
+## 3. AI Microservices (`shared/` Module)
+
+All AI microservices share a common `shared/` Python package for config, logging, device detection, and FastAPI utilities. Each service is a standalone FastAPI app with GPU lazy-loading and health checks.
+
+### 3.1 Service Overview
+
+| Service | Port | GPU | Model | Purpose |
+|---------|------|-----|-------|---------|
+| GLM-OCR | 8001 | Yes | `zai-org/GLM-OCR` | Image → Text extraction |
+| E5 Embedding | 8002 | Yes | `intfloat/multilingual-e5-large-instruct` | Text → Vector embeddings |
+| Chunking | 8003 | No | N/A (rule-based) | Hybrid text splitting |
+| Reranker | 8004 | Yes | `BAAI/bge-reranker-v2-m3` | Query-document relevance scoring |
+
+### 3.2 `shared/` Module Structure
+```
+shared/
+├── pyproject.toml           # pip install -e ./shared (dev) / pip install ./shared (prod)
+└── shared/
+    ├── config.py            # BaseServiceSettings, GPUServiceSettings
+    ├── logging.py           # setup_logging() - unified structured logging
+    ├── device.py            # get_device(), get_torch_dtype(), is_gpu_available()
+    ├── models.py            # HealthResponse, ErrorResponse (Pydantic)
+    ├── fastapi_utils.py     # create_service_app(), add_health_endpoint()
+    └── service_client.py    # EmbeddingClient, ChunkingClient, OCRClient, RerankerClient
+```
+
+### 3.3 Docker Build Strategy
+- **Build context**: Project root (`.`) — enables `COPY shared/` in all Dockerfiles
+- **Multi-stage**: `base` → `development` → `production`
+- **Development**: Volume mounts for live reload, debugpy ports
+- **Production**: Non-root user, HEALTHCHECK, no debug tools
+
+## 4. GPU Deployment Strategies (NVIDIA L40S 48GB)
 
 ### Scenario A: 1 GPU
 ```yaml
@@ -211,9 +261,9 @@ vllm_service_ha2:
 **Use Case**: Production with failover capability.
 **Benefits**: Zero-downtime upgrades, A/B model testing.
 
-## 4. Security & RBAC Implementation
+## 5. Security & RBAC Implementation
 
-### 4.1 Access Control Logic
+### 5.1 Access Control Logic
 ```python
 # User attributes
 user = {
@@ -241,7 +291,7 @@ filter = {
 }
 ```
 
-### 4.2 Document Metadata Schema
+### 5.2 Document Metadata Schema
 ```json
 {
   "id": "doc_12345",
@@ -257,46 +307,50 @@ filter = {
 }
 ```
 
-## 5. Performance Optimization
+## 6. Performance Optimization
 
-### 5.1 Concurrency Handling (50 Requests Target)
+### 6.1 Concurrency Handling (50 Requests Target)
 1. **FastAPI**: `uvicorn --workers 4 --loop uvloop --http httptools`
 2. **vLLM Continuous Batching**: Automatically batches requests to maximize GPU utilization.
 3. **Redis Queue**: Overflow requests queued and processed asynchronously.
 4. **Connection Pooling**: PostgreSQL and Qdrant connection pools (min=10, max=50).
 
-### 5.2 Caching Strategy
+### 6.2 Caching Strategy
 - **Redis**: Cache frequent queries (TTL: 1 hour).
 - **Qdrant**: In-memory quantized vectors for faster search.
 - **PostgreSQL**: Indexed queries on `user_id`, `timestamp`, `document_id`.
 
-## 6. Monitoring & Observability
+## 7. Monitoring & Observability
 
-### 6.1 Metrics to Track
+### 7.1 Metrics to Track
 - **GPU**: Utilization (%), Memory (GB), Temperature (°C).
 - **API**: Request rate (req/s), Latency (P50, P95, P99).
 - **Queue**: Redis queue depth, Celery worker status.
 - **Database**: Query performance, Connection pool usage.
 
-### 6.2 Health Check Endpoints
-- `GET /health`: Overall system health.
+### 7.2 Health Check Endpoints
+- `GET /health` (8000): Overall system health.
 - `GET /health/gpu`: GPU availability and stats.
 - `GET /health/qdrant`: Vector DB connection status.
 - `GET /health/workers`: Celery worker availability.
+- `GET /health` (8001): GLM-OCR service health.
+- `GET /health` (8002): E5 Embedding service health.
+- `GET /health` (8003): Chunking service health.
+- `GET /health` (8004): Reranker service health.
 
-## 7. Backup & Disaster Recovery
+## 8. Backup & Disaster Recovery
 
-### 7.1 Data Persistence
+### 8.1 Data Persistence
 - **PostgreSQL**: Daily automated backups via `pg_dump`.
 - **Qdrant**: Snapshot API for vector data backup.
 - **NAS**: Primary source of truth (RAID-configured).
 
-### 7.2 Recovery Strategy
+### 8.2 Recovery Strategy
 1. Restore PostgreSQL from latest backup.
 2. Rebuild Qdrant index from NAS source files (Celery task).
 3. Estimated recovery time: 4-8 hours (depending on data volume).
 
-## 8. Technology Versions (Recommended)
+## 9. Technology Versions (Recommended)
 
 | Component   | Version    | Notes                          |
 |-------------|------------|--------------------------------|
@@ -310,7 +364,7 @@ filter = {
 | Next.js     | 14+        | App Router, Server Components  |
 | CUDA        | 13.1       | Compatible with L40S           |
 
-## 9. Security Considerations (Air-Gapped)
+## 10. Security Considerations (Air-Gapped)
 
 1. **No Internet Access**: All dependencies pre-downloaded.
 2. **Certificate Management**: Internal CA for HTTPS.

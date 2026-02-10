@@ -58,6 +58,7 @@ class RetrievedDocument(BaseModel):
     document_id: UUID
     filename: str
     score: float
+    rerank_score: Optional[float] = None
     content: str
     metadata: Dict[str, Any]
 

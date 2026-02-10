@@ -62,7 +62,13 @@ class Settings(BaseSettings):
     # vLLM
     VLLM_URL: str = "http://vllm_service:8000"
     VLLM_TIMEOUT: int = 120
-    
+
+    # Microservice URLs
+    OCR_URL: str = "http://ocr_service:8001"
+    EMBEDDING_URL: str = "http://embedding_service:8002"
+    CHUNKING_URL: str = "http://chunking_service:8003"
+    RERANKER_URL: str = "http://reranker_service:8004"
+
     # Embedding
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
     EMBEDDING_BATCH_SIZE: int = 32

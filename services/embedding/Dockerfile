@@ -12,8 +12,12 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Install shared module
+COPY shared/ /tmp/shared/
+RUN pip3 install --no-cache-dir /tmp/shared/ && rm -rf /tmp/shared
+
 # Copy and install requirements
-COPY requirements.txt .
+COPY services/embedding/requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # =============================================================================
@@ -29,7 +33,7 @@ RUN pip3 install --no-cache-dir \
     ipdb
 
 # Copy service code
-COPY embedding_service.py .
+COPY services/embedding/embedding_service.py .
 
 # Expose application port + debugpy port
 EXPOSE 8002 5680
@@ -49,7 +53,7 @@ CMD ["python3", "-u", "embedding_service.py"]
 FROM base AS production
 
 # Copy service code
-COPY embedding_service.py .
+COPY services/embedding/embedding_service.py .
 
 # Create non-root user
 RUN useradd -m -u 1000 embeduser && chown -R embeduser:embeduser /app

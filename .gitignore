@@ -41,6 +41,10 @@ logs/
 # Docker
 docker-compose.override.yml
 
+# Shared module build artifacts
+shared/*.egg-info/
+shared/shared/*.egg-info/
+
 # Node
 node_modules/
 .next/

@@ -10,8 +10,12 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Install shared module
+COPY shared/ /tmp/shared/
+RUN pip install --no-cache-dir /tmp/shared/ && rm -rf /tmp/shared
+
 # Copy and install requirements
-COPY requirements.txt .
+COPY services/chunking/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # =============================================================================
@@ -27,7 +31,7 @@ RUN pip install --no-cache-dir \
     ipdb
 
 # Copy service code
-COPY chunking_service.py .
+COPY services/chunking/chunking_service.py .
 
 # Expose application port + debugpy port
 EXPOSE 8003 5681
@@ -46,7 +50,7 @@ CMD ["python", "-u", "chunking_service.py"]
 FROM base AS production
 
 # Copy service code
-COPY chunking_service.py .
+COPY services/chunking/chunking_service.py .
 
 # Create non-root user
 RUN useradd -m -u 1000 chunkuser && chown -R chunkuser:chunkuser /app

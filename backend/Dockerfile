@@ -12,8 +12,12 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Install shared module
+COPY shared/ /tmp/shared/
+RUN pip install --no-cache-dir /tmp/shared/ && rm -rf /tmp/shared
+
 # Copy and install requirements
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # =============================================================================
@@ -30,7 +34,7 @@ RUN pip install --no-cache-dir \
     ipdb
 
 # Copy application code
-COPY ./app /app/app
+COPY backend/app /app/app
 
 # Create logs directory
 RUN mkdir -p /app/logs
@@ -47,7 +51,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload
 FROM base AS production
 
 # Copy application code
-COPY ./app /app/app
+COPY backend/app /app/app
 
 # Create logs directory
 RUN mkdir -p /app/logs

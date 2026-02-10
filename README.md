@@ -5,18 +5,27 @@ Enterprise-grade, air-gapped LLM & RAG system for biotech companies with strict 
 ## 🏗️ Architecture
 
 ```
-Next.js Frontend (3000) 
+Next.js Frontend (3000)
     ↓
 FastAPI Backend (8000) - [RBAC Middleware] - [Audit Logging]
     ↓
-    ├─→ vLLM (8001) - LLM Inference (L40S GPUs)
-    ├─→ Qdrant (6333) - Vector DB with RBAC Filters
-    ├─→ PostgreSQL (5432) - Users, Audit Logs, Metadata
-    └─→ Redis (6379) - Cache & Task Queue
-         ↓
-    Celery Workers - Document Processing (OCR, Chunking, Embedding)
-         ↓
-    Celery Beat - Daily NAS Sync (02:00 AM)
+    ├─→ vLLM (8080) ─────── LLM Inference (L40S GPUs)
+    ├─→ Qdrant (6333) ───── Vector DB with RBAC Filters
+    ├─→ PostgreSQL (5432) ── Users, Audit Logs, Metadata
+    ├─→ Redis (6379) ─────── Cache & Task Queue
+    │
+    ├─→ AI Microservices (shared/ module)
+    │   ├── GLM-OCR (8001) ────── Image OCR (GPU)
+    │   ├── E5 Embedding (8002) ── Text Embeddings (GPU)
+    │   ├── Chunking (8003) ────── Hybrid Text Splitting (CPU)
+    │   └── Reranker (8004) ────── BGE Reranker v2 (GPU)
+    │
+    └─→ Celery Workers ─── Document Processing Pipeline
+         ↓                  OCR → Chunk → Embed → Qdrant
+    Celery Beat ─────────── Daily NAS Sync (02:00 AM)
+
+RAG Pipeline:
+  Query → Embed → Qdrant(top_k=20) → RERANK(top_k=5) → Prompt → LLM
 ```
 
 ## 📋 Key Features
@@ -85,23 +94,26 @@ NAS_SYNC_SCHEDULE=0 2 * * *  # Daily at 02:00 AM
 
 ### 2. Choose GPU Scenario
 
-Edit `docker-compose.yml` and uncomment your scenario:
+Edit `docker-compose.prod.yml` and uncomment your scenario:
 
 **Scenario A (1 GPU)** - Default, already active
-**Scenario B (2 GPUs)** - Uncomment lines 122-161, comment out Scenario A
-**Scenario C (4 GPUs)** - Uncomment lines 163-202, comment out Scenario A
+**Scenario B (2 GPUs)** - Uncomment lines for Scenario B, comment out Scenario A
+**Scenario C (4 GPUs)** - Uncomment lines for Scenario C, comment out Scenario A
 
 ### 3. Start Services
 
 ```bash
-# Build and start all services
-docker compose up -d
+# Production
+make prod-build && make prod
+
+# Development
+make dev-build && make dev
 
 # View logs
-docker compose logs -f
+make prod-logs  # or: make dev-logs
 
 # Check service health
-docker compose ps
+make test-health
 ```
 
 ### 4. Initialize Database
@@ -117,192 +129,160 @@ The PostgreSQL schema is automatically initialized on first run.
 - **Frontend (Chat)**: http://localhost:3000
 - **Backend API**: http://localhost:8000
 - **API Docs**: http://localhost:8000/docs
-- **Flower (Celery Monitor)**: http://localhost:5555 (dev profile only)
+- **Flower (Celery Monitor)**: http://localhost:5555 (dev: always on, prod: `--profile monitoring`)
 
 ## 💻 Development Setup
 
-### For Developers: Hot-Reload Environment
+### Option A: DevContainer (Recommended)
 
-This project supports a complete development workflow with hot-reload, debugging, and real-time code changes without rebuilding containers.
+1. Open project in VS Code
+2. Install "Dev Containers" extension
+3. `Ctrl+Shift+P` → "Reopen in Container"
+4. VS Code connects to the backend container with all tools pre-installed
 
-#### 1. Set Up Development Environment
+### Option B: Docker Compose
 
 ```bash
-# Copy environment file
 cp .env.example .env
-
-# Copy development override file
-cp docker-compose.override.example.yml docker-compose.override.yml
-
-# (Optional) Customize your local override file
-nano docker-compose.override.yml
+make dev-build && make dev
 ```
 
-#### 2. Start Development Services
+### Debug Ports
+
+| Service | Debug Port |
+|---------|-----------|
+| Backend | 5678 |
+| OCR Service | 5679 |
+| Embedding Service | 5680 |
+| Chunking Service | 5681 |
+| Reranker Service | 5682 |
+
+### Running Tests
 
 ```bash
-# Build and start all services in development mode
-docker compose up -d
+# Local pytest
+make test
 
-# Watch logs (hot-reload messages will appear here)
-docker compose logs -f backend frontend
-```
+# Inside Docker
+make test-docker
 
-#### 3. Development Features
+# Health checks
+make test-health
 
-**Hot-Reload Enabled:**
-- ✅ **Backend**: Code changes in `backend/app/` automatically reload uvicorn
-- ✅ **Frontend**: Next.js Fast Refresh for instant updates
-- ✅ **Worker**: Celery tasks reload on restart
-- ✅ **AI Services**: Python services reload on file changes
-
-**Debug Ports Exposed:**
-| Service | Debug Port | Purpose |
-|---------|-----------|---------|
-| Backend | 5678 | debugpy remote debugging |
-| OCR Service | 5679 | debugpy remote debugging |
-| Embedding Service | 5680 | debugpy remote debugging |
-| Chunking Service | 5681 | debugpy remote debugging |
-
-**Volume Mounts:**
-- Source code is mounted from host → changes reflect immediately
-- Dependencies remain in container → fast startup
-
-#### 4. Attach Debugger (VSCode)
-
-Add to `.vscode/launch.json`:
-```json
-{
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "Backend Remote Debug",
-      "type": "python",
-      "request": "attach",
-      "connect": {
-        "host": "localhost",
-        "port": 5678
-      },
-      "pathMappings": [
-        {
-          "localRoot": "${workspaceFolder}/backend/app",
-          "remoteRoot": "/app/app"
-        }
-      ]
-    }
-  ]
-}
-```
-
-**Usage:**
-1. Set breakpoint in `backend/app/main.py`
-2. Press F5 in VSCode
-3. Make API request → debugger pauses at breakpoint
-
-#### 5. Run Tests Inside Containers
-
-```bash
-# Backend tests
-docker compose exec backend pytest
-
-# Frontend tests
-docker compose exec frontend npm test
-
-# Worker tests
-docker compose exec celery_worker pytest
-```
-
-#### 6. Rebuild After Dependency Changes
-
-```bash
-# Only rebuild when requirements.txt or package.json changes
-docker compose build backend
-docker compose up -d backend
-
-# Or rebuild all services
-docker compose build
-docker compose up -d
-```
-
-#### 7. Switch to Production Mode
-
-```bash
-# Remove development override
-rm docker-compose.override.yml
-
-# Production build (default)
-docker compose up -d
+# AI service tests
+make test-services
 ```
 
 ### Development vs Production
 
 | Aspect | Development | Production |
 |--------|------------|-----------|
+| **Compose file** | `docker-compose.dev.yml` | `docker-compose.prod.yml` |
 | **Target** | `development` stage | `production` stage |
-| **Hot-Reload** | ✅ Enabled | ❌ Disabled |
-| **Debug Tools** | ✅ debugpy, pytest, ipdb | ❌ Not included |
+| **Hot-Reload** | Enabled | Disabled |
+| **Debug Tools** | debugpy, pytest, ipdb | Not included |
 | **Workers** | 1 (easier debugging) | 4 (performance) |
 | **Logging** | DEBUG level | INFO level |
 | **User** | root (flexibility) | non-root (security) |
-| **Image Size** | Larger (+200MB) | Optimized |
+| **Flower** | Always active | Profile-gated |
 
 ## 📁 Project Structure
 
 ```
 onprem_llm/
-├── ARCHITECTURE.md           # Detailed architecture documentation
-├── docker-compose.yml        # Multi-container orchestration
-├── .env.example              # Environment variables template
+├── docker-compose.prod.yml      # Production orchestration
+├── docker-compose.dev.yml       # Development orchestration (DevContainer)
+├── Makefile                     # Build/run shortcuts (make dev, make prod)
+├── .env.example                 # Environment variables template
+├── ARCHITECTURE.md              # Detailed architecture documentation
 │
-├── backend/                  # FastAPI Backend
+├── shared/                      # Shared Python module (pip-installable)
+│   ├── pyproject.toml           # Package definition
+│   └── shared/
+│       ├── config.py            # BaseServiceSettings, GPUServiceSettings
+│       ├── logging.py           # setup_logging() - unified logging
+│       ├── device.py            # get_device(), get_torch_dtype()
+│       ├── models.py            # HealthResponse, ErrorResponse
+│       ├── fastapi_utils.py     # create_service_app(), add_health_endpoint()
+│       └── service_client.py    # EmbeddingClient, ChunkingClient, etc.
+│
+├── backend/                     # FastAPI Backend
 │   ├── app/
-│   │   ├── main.py          # FastAPI app entry point
-│   │   ├── config.py        # Configuration settings
-│   │   ├── database.py      # PostgreSQL connection
-│   │   ├── models.py        # SQLAlchemy models
-│   │   ├── schemas.py       # Pydantic schemas
+│   │   ├── main.py             # FastAPI app entry point
+│   │   ├── config.py           # Configuration settings
+│   │   ├── database.py         # PostgreSQL connection
+│   │   ├── models.py           # SQLAlchemy models
+│   │   ├── schemas.py          # Pydantic schemas
 │   │   ├── middleware/
-│   │   │   ├── auth.py      # RBAC middleware
-│   │   │   └── logging.py   # Audit logging
+│   │   │   ├── auth.py         # RBAC middleware
+│   │   │   └── logging.py      # Audit logging
 │   │   ├── services/
-│   │   │   ├── qdrant_service.py   # Vector search with RBAC
-│   │   │   ├── llm_service.py      # vLLM communication
-│   │   │   └── rag_service.py      # RAG orchestration
+│   │   │   ├── qdrant_service.py    # Vector search with RBAC
+│   │   │   ├── llm_service.py       # vLLM communication
+│   │   │   ├── rag_service.py       # RAG orchestration + reranking
+│   │   │   └── reranker_client.py   # Reranker HTTP client
 │   │   └── api/endpoints/
-│   │       ├── chat.py      # Chat/RAG endpoints
-│   │       └── admin.py     # Admin endpoints
+│   │       ├── chat.py         # Chat/RAG endpoints
+│   │       └── admin.py        # Admin endpoints
 │   ├── Dockerfile
 │   └── requirements.txt
 │
-├── worker/                   # Celery Workers
-│   ├── celery_app.py        # Celery configuration
+├── services/                    # AI Microservices
+│   ├── ocr/                     # GLM-OCR (Port 8001, GPU)
+│   │   ├── Dockerfile
+│   │   ├── ocr_service.py
+│   │   └── requirements.txt
+│   ├── embedding/               # E5 Embedding (Port 8002, GPU)
+│   │   ├── Dockerfile
+│   │   ├── embedding_service.py
+│   │   └── requirements.txt
+│   ├── chunking/                # Hybrid Chunking (Port 8003, CPU)
+│   │   ├── Dockerfile
+│   │   ├── chunking_service.py
+│   │   └── requirements.txt
+│   └── reranker/                # BGE Reranker v2 (Port 8004, GPU)
+│       ├── Dockerfile
+│       ├── reranker_service.py
+│       └── requirements.txt
+│
+├── worker/                      # Celery Workers
+│   ├── celery_app.py           # Celery configuration
 │   ├── tasks/
-│   │   ├── nas_sync.py      # Daily NAS sync (02:00 AM)
-│   │   └── document_processing.py  # OCR, chunking, embedding
+│   │   ├── nas_sync.py         # Daily NAS sync (02:00 AM)
+│   │   └── document_processing.py  # OCR → Chunk → Embed pipeline
 │   ├── Dockerfile
 │   └── requirements.txt
 │
-├── vllm/                     # vLLM Serving
-│   ├── Dockerfile.1gpu      # 1 GPU scenario
-│   ├── Dockerfile.2gpu      # 2 GPUs scenario
-│   ├── Dockerfile.4gpu      # 4 GPUs scenario
-│   └── entrypoint.sh        # vLLM startup script
+├── vllm/                        # vLLM Serving (Port 8080)
+│   ├── Dockerfile.1gpu         # 1 GPU scenario
+│   ├── Dockerfile.2gpu         # 2 GPUs scenario
+│   ├── Dockerfile.4gpu         # 4 GPUs scenario
+│   └── entrypoint.sh           # vLLM startup script
 │
-├── frontend/                 # Next.js Frontend
+├── frontend/                    # Next.js Frontend
 │   ├── src/
 │   │   ├── app/
-│   │   │   ├── page.tsx     # Chat interface
-│   │   │   └── admin/       # Admin dashboard
+│   │   │   ├── page.tsx        # Chat interface
+│   │   │   └── admin/          # Admin dashboard
 │   │   └── components/
 │   ├── Dockerfile
 │   └── package.json
 │
+├── tests/                       # Pytest test suite
+│   ├── conftest.py             # Shared fixtures
+│   ├── pytest.ini              # Pytest configuration
+│   ├── unit/                   # Unit tests (mocked, no services needed)
+│   └── integration/            # Integration tests (running services)
+│
+├── .devcontainer/               # VS Code DevContainer
+│   └── devcontainer.json
+│
 ├── database/
-│   └── init.sql             # PostgreSQL schema
+│   └── init.sql                # PostgreSQL schema
 │
 └── config/
-    ├── redis.conf           # Redis configuration (optional)
-    └── qdrant.yaml          # Qdrant configuration (optional)
+    ├── redis.conf              # Redis configuration (optional)
+    └── qdrant.yaml             # Qdrant configuration (optional)
 ```
 
 ## 🔐 RBAC Example
@@ -358,56 +338,62 @@ onprem_llm/
 1. **Scan NAS**: Walk through `/mnt/nas` recursively
 2. **Detect Changes**: Calculate SHA-256 hash, compare with database
 3. **Queue Processing**: Send new/modified files to Celery workers
-4. **Extract Text**: 
+4. **Extract Text** (via AI microservices):
    - PDF → PyPDF2
    - Word → python-docx
    - Excel → openpyxl
-   - Images → Tesseract OCR (Korean + English)
-5. **Chunk Text**: Overlapping chunks (500 words, 50 overlap)
-6. **Generate Embeddings**: Sentence-Transformers (all-MiniLM-L6-v2)
+   - Images → GLM-OCR service (Port 8001)
+5. **Chunk Text**: Hybrid chunking service (Port 8003)
+6. **Generate Embeddings**: E5 embedding service (Port 8002)
 7. **Upsert to Qdrant**: With RBAC metadata (department, role)
 8. **Log to PostgreSQL**: Track processing status
 
 ## 🛠️ Useful Commands
 
-### Docker Compose
+### Make Targets
 ```bash
-# Start services
-docker compose up -d
+# Development
+make dev-build          # Build dev images
+make dev                # Start dev environment
+make dev-down           # Stop dev environment
+make dev-logs           # View all dev logs
 
-# Start with dev profile (includes Flower monitoring)
-docker compose --profile dev up -d
+# Production
+make prod-build         # Build prod images
+make prod               # Start production
+make prod-down          # Stop production
+make prod-logs          # View all prod logs
 
-# View logs
-docker compose logs -f backend
-docker compose logs -f celery_worker
+# Individual services
+make backend-logs       # View backend logs
+make reranker-logs      # View reranker logs
+make backend-restart    # Restart backend
 
-# Restart service
-docker compose restart backend
+# Testing
+make test               # Run pytest locally
+make test-docker        # Run pytest in Docker
+make test-health        # Health check all services
 
-# Stop services
-docker compose down
-
-# Stop and remove volumes (⚠️ deletes data)
-docker compose down -v
+# Cleanup
+make clean              # Remove all containers & volumes
 ```
 
 ### Database Access
 ```bash
-# Connect to PostgreSQL
-docker compose exec postgres psql -U admin -d onprem_llm
+# Connect to PostgreSQL (prod)
+docker compose -f docker-compose.prod.yml exec postgres psql -U admin -d onprem_llm
 
-# Run query
-docker compose exec postgres psql -U admin -d onprem_llm -c "SELECT COUNT(*) FROM documents;"
+# Run query (dev)
+docker compose -f docker-compose.dev.yml exec postgres psql -U admin -d onprem_llm -c "SELECT COUNT(*) FROM documents;"
 ```
 
 ### Celery Management
 ```bash
 # Check worker status
-docker compose exec celery_worker celery -A celery_app inspect active
+make dev && docker compose -f docker-compose.dev.yml exec celery_worker celery -A celery_app inspect active
 
 # Trigger NAS sync manually
-docker compose exec celery_worker celery -A celery_app call tasks.nas_sync.sync_nas_documents
+docker compose -f docker-compose.dev.yml exec celery_worker celery -A celery_app call tasks.nas_sync.sync_nas_documents
 ```
 
 ### GPU Monitoring
@@ -447,7 +433,7 @@ watch -n 1 nvidia-smi
    ```yaml
    networks:
      onprem_network:
-       internal: true  # Uncomment in docker-compose.yml
+       internal: true  # Uncomment in docker-compose.prod.yml
    ```
 
 3. **Use HTTPS**:
@@ -534,7 +520,7 @@ docker compose up -d backend
 ### Development: Port conflicts
 **Solution**:
 ```bash
-# Edit docker-compose.override.yml to change ports
+# Edit docker-compose.dev.yml to change ports
 services:
   backend:
     ports:
@@ -578,14 +564,31 @@ Interactive API docs available at: http://localhost:8000/docs
 
 ### Health Checks
 ```bash
-# Backend
-curl http://localhost:8000/health
+# All services at once
+make test-health
 
-# vLLM
-curl http://localhost:8001/health
+# Individual services
+curl http://localhost:8000/health   # Backend
+curl http://localhost:8080/health   # vLLM
+curl http://localhost:8001/health   # OCR
+curl http://localhost:8002/health   # Embedding
+curl http://localhost:8003/health   # Chunking
+curl http://localhost:8004/health   # Reranker
+curl http://localhost:6333/health   # Qdrant
+```
 
-# Qdrant
-curl http://localhost:6333/health
+### Pytest
+```bash
+# Run all tests locally
+make test
+
+# Run inside Docker container
+make test-docker
+
+# Run specific test categories
+python -m pytest tests/unit/ -v            # Unit tests only
+python -m pytest tests/integration/ -v     # Integration tests only
+python -m pytest -m "not integration" -v   # Skip integration tests
 ```
 
 ### Sample Query

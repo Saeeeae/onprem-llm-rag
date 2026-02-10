@@ -15,8 +15,12 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
+# Install shared module
+COPY shared/ /tmp/shared/
+RUN pip install --no-cache-dir /tmp/shared/ && rm -rf /tmp/shared
+
 # Copy and install requirements
-COPY requirements.txt .
+COPY worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # =============================================================================
@@ -33,7 +37,7 @@ RUN pip install --no-cache-dir \
     watchdog
 
 # Copy worker code
-COPY . /app
+COPY worker/ /app/
 
 # Create logs directory
 RUN mkdir -p /app/logs
@@ -47,7 +51,7 @@ CMD ["celery", "-A", "celery_app", "worker", "--loglevel=debug", "--concurrency=
 FROM base AS production
 
 # Copy worker code
-COPY . /app
+COPY worker/ /app/
 
 # Create logs directory
 RUN mkdir -p /app/logs

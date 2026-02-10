@@ -1,433 +1,279 @@
 # =============================================================================
-# On-Premise LLM & RAG System - Service Management Makefile
-# Usage: make <service>-<action> (e.g., make backend-build)
+# On-Premise LLM & RAG System - Makefile
 # =============================================================================
 
-.PHONY: help dev-setup prod-setup
+.PHONY: help dev dev-build dev-down dev-logs prod prod-build prod-down prod-logs \
+        test test-docker ps clean
 
-# Colors for output
-RED := \033[0;31m
-GREEN := \033[0;32m
+# Compose file references
+DEV_COMPOSE  := docker compose -f docker-compose.dev.yml
+PROD_COMPOSE := docker compose -f docker-compose.prod.yml
+
+# Colors
+RED    := \033[0;31m
+GREEN  := \033[0;32m
 YELLOW := \033[0;33m
-BLUE := \033[0;34m
-NC := \033[0m # No Color
+BLUE   := \033[0;34m
+NC     := \033[0m
 
-# Default target
+# =============================================================================
+# Help
+# =============================================================================
+
 help:
 	@echo ""
 	@echo "$(BLUE)═══════════════════════════════════════════════════════════════$(NC)"
-	@echo "$(BLUE)  On-Premise LLM & RAG System - Service Management$(NC)"
+	@echo "$(BLUE)  On-Premise LLM & RAG System$(NC)"
 	@echo "$(BLUE)═══════════════════════════════════════════════════════════════$(NC)"
 	@echo ""
-	@echo "$(GREEN)Environment Setup:$(NC)"
-	@echo "  make dev-setup         Copy override file for development"
-	@echo "  make prod-setup        Remove override file for production"
+	@echo "$(GREEN)Development:$(NC)"
+	@echo "  make dev               Start development environment"
+	@echo "  make dev-build         Build development images"
+	@echo "  make dev-down          Stop development environment"
+	@echo "  make dev-logs          Follow development logs"
+	@echo "  make dev-restart       Restart development environment"
 	@echo ""
-	@echo "$(GREEN)All Services:$(NC)"
-	@echo "  make up                Start all services (dev mode if override exists)"
-	@echo "  make down              Stop all services"
-	@echo "  make build-all         Build all service images"
-	@echo "  make restart-all       Restart all services"
-	@echo "  make logs              Follow logs for all services"
-	@echo "  make ps                Show service status"
-	@echo "  make clean             Remove containers and volumes (⚠️ data loss)"
-	@echo ""
-	@echo "$(GREEN)Individual Service Control:$(NC)"
-	@echo "  make <service>-build   Build service image"
-	@echo "  make <service>-run     Start service"
-	@echo "  make <service>-stop    Stop service"
-	@echo "  make <service>-remove  Remove service container"
-	@echo "  make <service>-restart Restart service"
-	@echo "  make <service>-logs    Follow service logs"
-	@echo ""
-	@echo "$(GREEN)Available Services:$(NC)"
-	@echo "  $(YELLOW)Core Services:$(NC)     backend, frontend, worker"
-	@echo "  $(YELLOW)AI Services:$(NC)      ocr, embedding, chunking"
-	@echo "  $(YELLOW)Infrastructure:$(NC)   postgres, redis, qdrant, vllm"
-	@echo "  $(YELLOW)Monitoring:$(NC)       flower (dev only)"
-	@echo ""
-	@echo "$(GREEN)Examples:$(NC)"
-	@echo "  make backend-build     # Build backend image"
-	@echo "  make backend-run       # Start backend service"
-	@echo "  make backend-logs      # Follow backend logs"
-	@echo "  make ocr-restart       # Restart OCR service"
+	@echo "$(GREEN)Production:$(NC)"
+	@echo "  make prod              Start production environment"
+	@echo "  make prod-build        Build production images"
+	@echo "  make prod-down         Stop production environment"
+	@echo "  make prod-logs         Follow production logs"
+	@echo "  make prod-restart      Restart production environment"
 	@echo ""
 	@echo "$(GREEN)Testing:$(NC)"
+	@echo "  make test              Run pytest locally"
+	@echo "  make test-docker       Run pytest inside dev container"
 	@echo "  make test-health       Test all health endpoints"
-	@echo "  make test-backend      Test backend API"
-	@echo "  make test-services     Test AI services"
+	@echo "  make test-services     Test AI service endpoints"
+	@echo ""
+	@echo "$(GREEN)Individual Services (dev):$(NC)"
+	@echo "  make <service>-build   Build: backend, worker, ocr, embedding, chunking, reranker"
+	@echo "  make <service>-logs    Follow logs for a service"
+	@echo "  make <service>-restart Restart a service"
+	@echo ""
+	@echo "$(GREEN)Utilities:$(NC)"
+	@echo "  make ps                Show running containers"
+	@echo "  make clean             Remove all containers and volumes"
 	@echo ""
 
 # =============================================================================
-# Environment Setup
+# Development Environment
 # =============================================================================
 
-dev-setup:
-	@if [ ! -f docker-compose.override.yml ]; then \
-		cp docker-compose.override.example.yml docker-compose.override.yml; \
-		echo "$(GREEN)✓$(NC) Development environment configured"; \
-		echo "$(YELLOW)→$(NC) Run 'make up' to start in development mode"; \
-	else \
-		echo "$(YELLOW)⚠$(NC) docker-compose.override.yml already exists"; \
-	fi
-
-prod-setup:
-	@if [ -f docker-compose.override.yml ]; then \
-		rm docker-compose.override.yml; \
-		echo "$(GREEN)✓$(NC) Production environment configured"; \
-		echo "$(YELLOW)→$(NC) Run 'make up' to start in production mode"; \
-	else \
-		echo "$(GREEN)✓$(NC) Already in production mode"; \
-	fi
-
-# =============================================================================
-# All Services Management
-# =============================================================================
-
-up:
-	@docker compose up -d
+dev:
+	@$(DEV_COMPOSE) up -d
 	@echo ""
-	@echo "$(GREEN)✓$(NC) Services started"
+	@echo "$(GREEN)Development environment started$(NC)"
+	@echo "  Frontend:  http://localhost:3000"
+	@echo "  Backend:   http://localhost:8000"
+	@echo "  API Docs:  http://localhost:8000/docs"
+	@echo "  Flower:    http://localhost:5555"
+	@echo "  Qdrant:    http://localhost:6333/dashboard"
 	@echo ""
-	@make ps
-	@echo ""
-	@echo "$(YELLOW)→$(NC) Frontend:  http://localhost:3000"
-	@echo "$(YELLOW)→$(NC) Backend:   http://localhost:8000"
-	@echo "$(YELLOW)→$(NC) API Docs:  http://localhost:8000/docs"
+	@echo "$(YELLOW)Debug ports:$(NC)"
+	@echo "  Backend:   5678"
+	@echo "  OCR:       5679"
+	@echo "  Embedding: 5680"
+	@echo "  Chunking:  5681"
+	@echo "  Reranker:  5682"
 
-down:
-	@docker compose down
-	@echo "$(GREEN)✓$(NC) All services stopped"
+dev-build:
+	@echo "$(BLUE)Building development images...$(NC)"
+	@$(DEV_COMPOSE) build
+	@echo "$(GREEN)Development images built$(NC)"
 
-build-all:
-	@echo "$(BLUE)Building all services...$(NC)"
-	@docker compose build
-	@echo "$(GREEN)✓$(NC) All services built"
+dev-down:
+	@$(DEV_COMPOSE) down
+	@echo "$(GREEN)Development environment stopped$(NC)"
 
-restart-all:
-	@echo "$(BLUE)Restarting all services...$(NC)"
-	@docker compose restart
-	@echo "$(GREEN)✓$(NC) All services restarted"
+dev-logs:
+	@$(DEV_COMPOSE) logs -f
 
-logs:
-	@docker compose logs -f
+dev-restart:
+	@$(DEV_COMPOSE) restart
+	@echo "$(GREEN)Development environment restarted$(NC)"
 
-ps:
-	@docker compose ps
-
-clean:
-	@echo "$(RED)⚠ WARNING: This will remove all containers and volumes!$(NC)"
-	@echo "$(RED)⚠ All data will be lost!$(NC)"
-	@read -p "Are you sure? (yes/no): " confirm; \
-	if [ "$$confirm" = "yes" ]; then \
-		docker compose down -v --remove-orphans; \
-		echo "$(GREEN)✓$(NC) All containers and volumes removed"; \
-	else \
-		echo "$(YELLOW)Cancelled$(NC)"; \
-	fi
+dev-ps:
+	@$(DEV_COMPOSE) ps
 
 # =============================================================================
-# Backend Service
+# Production Environment
+# =============================================================================
+
+prod:
+	@$(PROD_COMPOSE) up -d
+	@echo ""
+	@echo "$(GREEN)Production environment started$(NC)"
+	@echo "  Frontend:  http://localhost:3000"
+	@echo "  Backend:   http://localhost:8000"
+
+prod-build:
+	@echo "$(BLUE)Building production images...$(NC)"
+	@$(PROD_COMPOSE) build
+	@echo "$(GREEN)Production images built$(NC)"
+
+prod-down:
+	@$(PROD_COMPOSE) down
+	@echo "$(GREEN)Production environment stopped$(NC)"
+
+prod-logs:
+	@$(PROD_COMPOSE) logs -f
+
+prod-restart:
+	@$(PROD_COMPOSE) restart
+	@echo "$(GREEN)Production environment restarted$(NC)"
+
+prod-ps:
+	@$(PROD_COMPOSE) ps
+
+# =============================================================================
+# Individual Service Control (Development)
 # =============================================================================
 
 backend-build:
-	@docker compose build backend
-	@echo "$(GREEN)✓$(NC) Backend built"
-
-backend-run:
-	@docker compose up -d backend
-	@echo "$(GREEN)✓$(NC) Backend started"
-
-backend-stop:
-	@docker compose stop backend
-	@echo "$(GREEN)✓$(NC) Backend stopped"
-
-backend-remove:
-	@docker compose rm -f backend
-	@echo "$(GREEN)✓$(NC) Backend container removed"
-
-backend-restart:
-	@docker compose restart backend
-	@echo "$(GREEN)✓$(NC) Backend restarted"
+	@$(DEV_COMPOSE) build backend
+	@echo "$(GREEN)Backend built$(NC)"
 
 backend-logs:
-	@docker compose logs -f backend
+	@$(DEV_COMPOSE) logs -f backend
 
-# =============================================================================
-# Frontend Service
-# =============================================================================
-
-frontend-build:
-	@docker compose build frontend
-	@echo "$(GREEN)✓$(NC) Frontend built"
-
-frontend-run:
-	@docker compose up -d frontend
-	@echo "$(GREEN)✓$(NC) Frontend started"
-
-frontend-stop:
-	@docker compose stop frontend
-	@echo "$(GREEN)✓$(NC) Frontend stopped"
-
-frontend-remove:
-	@docker compose rm -f frontend
-	@echo "$(GREEN)✓$(NC) Frontend container removed"
-
-frontend-restart:
-	@docker compose restart frontend
-	@echo "$(GREEN)✓$(NC) Frontend restarted"
-
-frontend-logs:
-	@docker compose logs -f frontend
-
-# =============================================================================
-# Worker Service (Celery)
-# =============================================================================
+backend-restart:
+	@$(DEV_COMPOSE) restart backend
+	@echo "$(GREEN)Backend restarted$(NC)"
 
 worker-build:
-	@docker compose build celery_worker
-	@echo "$(GREEN)✓$(NC) Worker built"
-
-worker-run:
-	@docker compose up -d celery_worker
-	@echo "$(GREEN)✓$(NC) Worker started"
-
-worker-stop:
-	@docker compose stop celery_worker
-	@echo "$(GREEN)✓$(NC) Worker stopped"
-
-worker-remove:
-	@docker compose rm -f celery_worker
-	@echo "$(GREEN)✓$(NC) Worker container removed"
-
-worker-restart:
-	@docker compose restart celery_worker
-	@echo "$(GREEN)✓$(NC) Worker restarted"
+	@$(DEV_COMPOSE) build celery_worker
+	@echo "$(GREEN)Worker built$(NC)"
 
 worker-logs:
-	@docker compose logs -f celery_worker
+	@$(DEV_COMPOSE) logs -f celery_worker
 
-# =============================================================================
-# OCR Service
-# =============================================================================
+worker-restart:
+	@$(DEV_COMPOSE) restart celery_worker
+	@echo "$(GREEN)Worker restarted$(NC)"
 
 ocr-build:
-	@docker compose build ocr_service
-	@echo "$(GREEN)✓$(NC) OCR service built"
-
-ocr-run:
-	@docker compose up -d ocr_service
-	@echo "$(GREEN)✓$(NC) OCR service started"
-
-ocr-stop:
-	@docker compose stop ocr_service
-	@echo "$(GREEN)✓$(NC) OCR service stopped"
-
-ocr-remove:
-	@docker compose rm -f ocr_service
-	@echo "$(GREEN)✓$(NC) OCR service container removed"
-
-ocr-restart:
-	@docker compose restart ocr_service
-	@echo "$(GREEN)✓$(NC) OCR service restarted"
+	@$(DEV_COMPOSE) build ocr_service
+	@echo "$(GREEN)OCR service built$(NC)"
 
 ocr-logs:
-	@docker compose logs -f ocr_service
+	@$(DEV_COMPOSE) logs -f ocr_service
 
-# =============================================================================
-# Embedding Service
-# =============================================================================
+ocr-restart:
+	@$(DEV_COMPOSE) restart ocr_service
+	@echo "$(GREEN)OCR service restarted$(NC)"
 
 embedding-build:
-	@docker compose build embedding_service
-	@echo "$(GREEN)✓$(NC) Embedding service built"
-
-embedding-run:
-	@docker compose up -d embedding_service
-	@echo "$(GREEN)✓$(NC) Embedding service started"
-
-embedding-stop:
-	@docker compose stop embedding_service
-	@echo "$(GREEN)✓$(NC) Embedding service stopped"
-
-embedding-remove:
-	@docker compose rm -f embedding_service
-	@echo "$(GREEN)✓$(NC) Embedding service container removed"
-
-embedding-restart:
-	@docker compose restart embedding_service
-	@echo "$(GREEN)✓$(NC) Embedding service restarted"
+	@$(DEV_COMPOSE) build embedding_service
+	@echo "$(GREEN)Embedding service built$(NC)"
 
 embedding-logs:
-	@docker compose logs -f embedding_service
+	@$(DEV_COMPOSE) logs -f embedding_service
 
-# =============================================================================
-# Chunking Service
-# =============================================================================
+embedding-restart:
+	@$(DEV_COMPOSE) restart embedding_service
+	@echo "$(GREEN)Embedding service restarted$(NC)"
 
 chunking-build:
-	@docker compose build chunking_service
-	@echo "$(GREEN)✓$(NC) Chunking service built"
-
-chunking-run:
-	@docker compose up -d chunking_service
-	@echo "$(GREEN)✓$(NC) Chunking service started"
-
-chunking-stop:
-	@docker compose stop chunking_service
-	@echo "$(GREEN)✓$(NC) Chunking service stopped"
-
-chunking-remove:
-	@docker compose rm -f chunking_service
-	@echo "$(GREEN)✓$(NC) Chunking service container removed"
-
-chunking-restart:
-	@docker compose restart chunking_service
-	@echo "$(GREEN)✓$(NC) Chunking service restarted"
+	@$(DEV_COMPOSE) build chunking_service
+	@echo "$(GREEN)Chunking service built$(NC)"
 
 chunking-logs:
-	@docker compose logs -f chunking_service
+	@$(DEV_COMPOSE) logs -f chunking_service
 
-# =============================================================================
-# vLLM Service
-# =============================================================================
+chunking-restart:
+	@$(DEV_COMPOSE) restart chunking_service
+	@echo "$(GREEN)Chunking service restarted$(NC)"
+
+reranker-build:
+	@$(DEV_COMPOSE) build reranker_service
+	@echo "$(GREEN)Reranker service built$(NC)"
+
+reranker-logs:
+	@$(DEV_COMPOSE) logs -f reranker_service
+
+reranker-restart:
+	@$(DEV_COMPOSE) restart reranker_service
+	@echo "$(GREEN)Reranker service restarted$(NC)"
+
+frontend-build:
+	@$(DEV_COMPOSE) build frontend
+	@echo "$(GREEN)Frontend built$(NC)"
+
+frontend-logs:
+	@$(DEV_COMPOSE) logs -f frontend
+
+frontend-restart:
+	@$(DEV_COMPOSE) restart frontend
+	@echo "$(GREEN)Frontend restarted$(NC)"
 
 vllm-build:
-	@docker compose build vllm_service
-	@echo "$(GREEN)✓$(NC) vLLM service built"
-
-vllm-run:
-	@docker compose up -d vllm_service
-	@echo "$(GREEN)✓$(NC) vLLM service started"
-
-vllm-stop:
-	@docker compose stop vllm_service
-	@echo "$(GREEN)✓$(NC) vLLM service stopped"
-
-vllm-remove:
-	@docker compose rm -f vllm_service
-	@echo "$(GREEN)✓$(NC) vLLM service container removed"
-
-vllm-restart:
-	@docker compose restart vllm_service
-	@echo "$(GREEN)✓$(NC) vLLM service restarted"
+	@$(DEV_COMPOSE) build vllm_service
+	@echo "$(GREEN)vLLM service built$(NC)"
 
 vllm-logs:
-	@docker compose logs -f vllm_service
+	@$(DEV_COMPOSE) logs -f vllm_service
 
-# =============================================================================
-# Database Services
-# =============================================================================
-
-postgres-run:
-	@docker compose up -d postgres
-	@echo "$(GREEN)✓$(NC) PostgreSQL started"
-
-postgres-stop:
-	@docker compose stop postgres
-	@echo "$(GREEN)✓$(NC) PostgreSQL stopped"
-
-postgres-restart:
-	@docker compose restart postgres
-	@echo "$(GREEN)✓$(NC) PostgreSQL restarted"
-
-postgres-logs:
-	@docker compose logs -f postgres
-
-redis-run:
-	@docker compose up -d redis
-	@echo "$(GREEN)✓$(NC) Redis started"
-
-redis-stop:
-	@docker compose stop redis
-	@echo "$(GREEN)✓$(NC) Redis stopped"
-
-redis-restart:
-	@docker compose restart redis
-	@echo "$(GREEN)✓$(NC) Redis restarted"
-
-redis-logs:
-	@docker compose logs -f redis
-
-qdrant-run:
-	@docker compose up -d qdrant
-	@echo "$(GREEN)✓$(NC) Qdrant started"
-
-qdrant-stop:
-	@docker compose stop qdrant
-	@echo "$(GREEN)✓$(NC) Qdrant stopped"
-
-qdrant-restart:
-	@docker compose restart qdrant
-	@echo "$(GREEN)✓$(NC) Qdrant restarted"
-
-qdrant-logs:
-	@docker compose logs -f qdrant
-
-# =============================================================================
-# Monitoring (Flower)
-# =============================================================================
-
-flower-run:
-	@docker compose --profile dev up -d flower
-	@echo "$(GREEN)✓$(NC) Flower started at http://localhost:5555"
-
-flower-stop:
-	@docker compose stop flower
-	@echo "$(GREEN)✓$(NC) Flower stopped"
-
-flower-logs:
-	@docker compose logs -f flower
+vllm-restart:
+	@$(DEV_COMPOSE) restart vllm_service
+	@echo "$(GREEN)vLLM service restarted$(NC)"
 
 # =============================================================================
 # Testing
 # =============================================================================
 
+test:
+	@python -m pytest tests/ -v
+
+test-docker:
+	@$(DEV_COMPOSE) exec backend pytest tests/ -v
+
 test-health:
-	@echo "$(BLUE)Testing service health endpoints...$(NC)"
+	@echo "$(BLUE)Testing health endpoints...$(NC)"
 	@echo ""
 	@echo "Backend:"
-	@curl -s http://localhost:8000/health | python3 -m json.tool || echo "$(RED)✗ Backend not responding$(NC)"
-	@echo ""
+	@curl -sf http://localhost:8000/health | python3 -m json.tool 2>/dev/null || echo "$(RED)  Not responding$(NC)"
 	@echo "OCR Service:"
-	@curl -s http://localhost:8001/health | python3 -m json.tool || echo "$(RED)✗ OCR not responding$(NC)"
-	@echo ""
+	@curl -sf http://localhost:8001/health | python3 -m json.tool 2>/dev/null || echo "$(RED)  Not responding$(NC)"
 	@echo "Embedding Service:"
-	@curl -s http://localhost:8002/health | python3 -m json.tool || echo "$(RED)✗ Embedding not responding$(NC)"
-	@echo ""
+	@curl -sf http://localhost:8002/health | python3 -m json.tool 2>/dev/null || echo "$(RED)  Not responding$(NC)"
 	@echo "Chunking Service:"
-	@curl -s http://localhost:8003/health | python3 -m json.tool || echo "$(RED)✗ Chunking not responding$(NC)"
-	@echo ""
+	@curl -sf http://localhost:8003/health | python3 -m json.tool 2>/dev/null || echo "$(RED)  Not responding$(NC)"
+	@echo "Reranker Service:"
+	@curl -sf http://localhost:8004/health | python3 -m json.tool 2>/dev/null || echo "$(RED)  Not responding$(NC)"
 	@echo "Qdrant:"
-	@curl -s http://localhost:6333/health | python3 -m json.tool || echo "$(RED)✗ Qdrant not responding$(NC)"
-
-test-backend:
-	@echo "$(BLUE)Testing backend API...$(NC)"
-	@curl -s http://localhost:8000/docs > /dev/null && echo "$(GREEN)✓$(NC) API docs available" || echo "$(RED)✗$(NC) API docs not available"
+	@curl -sf http://localhost:6333/health | python3 -m json.tool 2>/dev/null || echo "$(RED)  Not responding$(NC)"
 
 test-services:
-	@echo "$(BLUE)Testing AI services...$(NC)"
-	@echo "OCR Service:"
-	@curl -s http://localhost:8001/test | python3 -m json.tool || echo "$(RED)✗ OCR test failed$(NC)"
+	@echo "$(BLUE)Testing AI service endpoints...$(NC)"
 	@echo ""
-	@echo "Embedding Service:"
-	@curl -s http://localhost:8002/test | python3 -m json.tool || echo "$(RED)✗ Embedding test failed$(NC)"
+	@echo "OCR Service /test:"
+	@curl -sf http://localhost:8001/test | python3 -m json.tool 2>/dev/null || echo "$(RED)  Test failed$(NC)"
 	@echo ""
-	@echo "Chunking Service:"
-	@curl -s http://localhost:8003/test | python3 -m json.tool || echo "$(RED)✗ Chunking test failed$(NC)"
+	@echo "Embedding Service /test:"
+	@curl -sf http://localhost:8002/test | python3 -m json.tool 2>/dev/null || echo "$(RED)  Test failed$(NC)"
+	@echo ""
+	@echo "Chunking Service /test:"
+	@curl -sf http://localhost:8003/test | python3 -m json.tool 2>/dev/null || echo "$(RED)  Test failed$(NC)"
+	@echo ""
+	@echo "Reranker Service /test:"
+	@curl -sf http://localhost:8004/test | python3 -m json.tool 2>/dev/null || echo "$(RED)  Test failed$(NC)"
 
 # =============================================================================
-# Quick Development Commands
+# Utilities
 # =============================================================================
 
-dev: dev-setup up
-	@echo "$(GREEN)✓$(NC) Development environment ready"
+ps:
+	@$(DEV_COMPOSE) ps 2>/dev/null; $(PROD_COMPOSE) ps 2>/dev/null
 
-prod: prod-setup up
-	@echo "$(GREEN)✓$(NC) Production environment ready"
-
-rebuild:
-	@echo "$(BLUE)Rebuilding and restarting all services...$(NC)"
-	@docker compose build
-	@docker compose up -d
-	@echo "$(GREEN)✓$(NC) All services rebuilt and restarted"
+clean:
+	@echo "$(RED)WARNING: This will remove all containers and volumes!$(NC)"
+	@echo "$(RED)All data (PostgreSQL, Redis, Qdrant) will be lost!$(NC)"
+	@read -p "Are you sure? (yes/no): " confirm; \
+	if [ "$$confirm" = "yes" ]; then \
+		$(DEV_COMPOSE) down -v --remove-orphans 2>/dev/null; \
+		$(PROD_COMPOSE) down -v --remove-orphans 2>/dev/null; \
+		echo "$(GREEN)All containers and volumes removed$(NC)"; \
+	else \
+		echo "$(YELLOW)Cancelled$(NC)"; \
+	fi

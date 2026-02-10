@@ -1,5 +1,5 @@
 # =============================================================================
-# GLM-OCR Service - Base Stage
+# BGE Reranker Service - Base Stage
 # =============================================================================
 FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04 AS base
 
@@ -9,8 +9,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3-pip \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,7 +17,7 @@ COPY shared/ /tmp/shared/
 RUN pip3 install --no-cache-dir /tmp/shared/ && rm -rf /tmp/shared
 
 # Copy and install requirements
-COPY services/ocr/requirements.txt .
+COPY services/reranker/requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # =============================================================================
@@ -35,19 +33,19 @@ RUN pip3 install --no-cache-dir \
     ipdb
 
 # Copy service code
-COPY services/ocr/ocr_service.py .
+COPY services/reranker/reranker_service.py .
 
 # Expose application port + debugpy port
-EXPOSE 8001 5679
+EXPOSE 8004 5682
 
 # Set environment variables
-ENV OCR_MODEL=zai-org/GLM-OCR \
-    OCR_SERVICE_PORT=8001 \
+ENV RERANKER_MODEL=BAAI/bge-reranker-v2-m3 \
+    RERANKER_SERVICE_PORT=8004 \
     PYTHONUNBUFFERED=1 \
     LOG_LEVEL=DEBUG
 
 # Run service
-CMD ["python3", "-u", "ocr_service.py"]
+CMD ["python3", "-u", "reranker_service.py"]
 
 # =============================================================================
 # Production Stage - Optimized & Secure
@@ -55,23 +53,23 @@ CMD ["python3", "-u", "ocr_service.py"]
 FROM base AS production
 
 # Copy service code
-COPY services/ocr/ocr_service.py .
+COPY services/reranker/reranker_service.py .
 
 # Create non-root user
-RUN useradd -m -u 1000 ocruser && chown -R ocruser:ocruser /app
-USER ocruser
+RUN useradd -m -u 1000 rerankeruser && chown -R rerankeruser:rerankeruser /app
+USER rerankeruser
 
 # Expose port
-EXPOSE 8001
+EXPOSE 8004
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD curl -f http://localhost:8001/health || exit 1
+    CMD curl -f http://localhost:8004/health || exit 1
 
 # Set environment variables
-ENV OCR_MODEL=zai-org/GLM-OCR \
-    OCR_SERVICE_PORT=8001 \
+ENV RERANKER_MODEL=BAAI/bge-reranker-v2-m3 \
+    RERANKER_SERVICE_PORT=8004 \
     PYTHONUNBUFFERED=1
 
 # Run service
-CMD ["python3", "ocr_service.py"]
+CMD ["python3", "reranker_service.py"]

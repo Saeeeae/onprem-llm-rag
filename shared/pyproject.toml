@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "onprem-shared"
+version = "1.0.0"
+description = "Shared utilities for On-Premise LLM & RAG services"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "fastapi>=0.109.0",
+]
+
+[project.optional-dependencies]
+gpu = ["torch>=2.1.0"]
+dev = ["pytest", "pytest-asyncio", "httpx"]
+
+[tool.setuptools.packages.find]
+include = ["shared*"]
