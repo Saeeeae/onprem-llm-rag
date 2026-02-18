@@ -7,7 +7,7 @@ import logging
 from app.config import settings
 from app.database import init_db, close_db
 from app.middleware.logging import AuditLoggingMiddleware
-from app.api.endpoints import chat, admin
+from app.api.endpoints import admin, auth, chat
 
 # Configure logging
 logging.basicConfig(
@@ -54,6 +54,7 @@ app.add_middleware(AuditLoggingMiddleware)
 # Include routers
 app.include_router(chat.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
+app.include_router(auth.router, prefix="/api/v1")
 
 
 @app.get("/")

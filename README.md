@@ -120,9 +120,25 @@ make test-health
 
 The PostgreSQL schema is automatically initialized on first run.
 
-**Default Admin Credentials:**
-- Username: `admin`
-- Password: `admin123` (⚠️ CHANGE IN PRODUCTION!)
+For security, no default admin user is seeded.
+
+Create the first admin manually:
+```bash
+docker exec -it onprem_postgres psql -U ${POSTGRES_USER:-admin} -d ${POSTGRES_DB:-onprem_llm} -c "
+INSERT INTO users (username, email, hashed_password, full_name, department, role, is_superuser)
+VALUES (
+  'admin',
+  'admin@example.com',
+  crypt('CHANGE_ME_STRONG_PASSWORD', gen_salt('bf')),
+  'System Administrator',
+  'IT',
+  'Admin',
+  TRUE
+)
+ON CONFLICT (username) DO NOTHING;
+"
+```
+Use `onprem_dev_postgres` instead of `onprem_postgres` in development.
 
 ### 5. Access Services
 
@@ -549,9 +565,11 @@ Interactive API docs available at: http://localhost:8000/docs
 
 **Authentication**:
 - `POST /api/v1/auth/login` - Login and get JWT token
+- `GET /api/v1/auth/me` - Get current authenticated user profile
 
 **Chat**:
 - `POST /api/v1/chat/` - Send query, get RAG answer
+- `POST /api/v1/chat/search` - Retrieve documents only (no generation)
 - `GET /api/v1/chat/history` - Get user's chat history
 
 **Admin** (superuser only):

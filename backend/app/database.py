@@ -1,5 +1,4 @@
 """Database connection and session management"""
-import asyncpg
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from typing import AsyncGenerator

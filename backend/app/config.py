@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     QDRANT_HOST: str = "qdrant"
     QDRANT_PORT: int = 6333
     QDRANT_COLLECTION_NAME: str = "documents"
-    QDRANT_VECTOR_SIZE: int = 384  # sentence-transformers/all-MiniLM-L6-v2
+    QDRANT_VECTOR_SIZE: int = 1024  # intfloat/multilingual-e5-large
     
     # vLLM
     VLLM_URL: str = "http://vllm_service:8000"
@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     RERANKER_URL: str = "http://reranker_service:8004"
 
     # Embedding
-    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    EMBEDDING_MODEL: str = "intfloat/multilingual-e5-large"
     EMBEDDING_BATCH_SIZE: int = 32
     EMBEDDING_MAX_LENGTH: int = 512
     

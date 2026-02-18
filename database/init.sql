@@ -167,19 +167,10 @@ CREATE TRIGGER update_documents_updated_at BEFORE UPDATE ON documents
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- =============================================================================
--- Initial Data - Create default admin user
--- Password: 'admin123' (CHANGE IN PRODUCTION!)
+-- Initial Data
 -- =============================================================================
-INSERT INTO users (username, email, hashed_password, full_name, department, role, is_superuser)
-VALUES (
-    'admin',
-    'admin@example.com',
-    crypt('admin123', gen_salt('bf')),  -- Bcrypt hash
-    'System Administrator',
-    'IT',
-    'Admin',
-    TRUE
-) ON CONFLICT (username) DO NOTHING;
+-- For security, no default admin user is seeded.
+-- Create the first admin manually after deployment.
 
 -- =============================================================================
 -- Views for Analytics
@@ -195,8 +186,9 @@ SELECT
     AVG(al.latency_ms) AS avg_latency_ms,
     SUM(al.token_count) AS total_tokens_used
 FROM users u
-LEFT JOIN audit_logs al ON u.id = al.user_id
-WHERE al.action_type = 'query'
+LEFT JOIN audit_logs al
+    ON u.id = al.user_id
+    AND al.action_type = 'query'
 GROUP BY u.id, u.username, u.department, u.role;
 
 CREATE OR REPLACE VIEW document_access_stats AS
@@ -206,13 +198,17 @@ SELECT
     d.department,
     d.role,
     d.indexed_at,
-    COUNT(DISTINCT al.user_id) AS unique_users_accessed,
+    COUNT(DISTINCT al.user_id) FILTER (WHERE al.user_id IS NOT NULL) AS unique_users_accessed,
     COUNT(al.id) AS total_accesses
 FROM documents d
-LEFT JOIN audit_logs al ON d.id = ANY(
-    SELECT jsonb_array_elements_text(al.retrieved_documents)::UUID
-)
-WHERE al.action_type = 'query'
+LEFT JOIN audit_logs al
+    ON al.action_type = 'query'
+    AND al.retrieved_documents IS NOT NULL
+    AND EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(al.retrieved_documents) AS doc_ref
+        WHERE (doc_ref ->> 'document_id')::UUID = d.id
+    )
 GROUP BY d.id, d.filename, d.department, d.role, d.indexed_at;
 
 -- =============================================================================

@@ -72,6 +72,24 @@ class ChatResponse(BaseModel):
     model_name: str
 
 
+class SearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=5000)
+    top_k: int = Field(10, ge=1, le=50)
+
+
+class SearchDocument(BaseModel):
+    document_id: UUID
+    filename: str
+    score: float
+    content: str
+    metadata: Dict[str, Any]
+
+
+class SearchResponse(BaseModel):
+    documents: List[SearchDocument]
+    total_found: int
+
+
 # =============================================================================
 # Document Schemas
 # =============================================================================

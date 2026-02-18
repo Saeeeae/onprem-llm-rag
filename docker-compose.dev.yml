@@ -250,6 +250,7 @@ services:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - QDRANT_COLLECTION_NAME=documents
+      - QDRANT_VECTOR_SIZE=1024
       - VLLM_URL=http://vllm_service:8000
       - OCR_URL=http://ocr_service:8001
       - EMBEDDING_URL=http://embedding_service:8002
@@ -258,7 +259,7 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-secret-key-not-for-production}
       - CORS_ORIGINS=http://localhost:3000
       - MAX_CONCURRENT_REQUESTS=50
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
     volumes:
       - ./backend/app:/app/app
       - ./backend/logs:/app/logs
@@ -302,12 +303,13 @@ services:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - QDRANT_COLLECTION_NAME=documents
+      - QDRANT_VECTOR_SIZE=1024
       - VLLM_URL=http://vllm_service:8000
       - OCR_URL=http://ocr_service:8001
       - EMBEDDING_URL=http://embedding_service:8002
       - CHUNKING_URL=http://chunking_service:8003
       - RERANKER_URL=http://reranker_service:8004
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
       - NAS_MOUNT_PATH=${NAS_MOUNT_PATH:-/mnt/nas}
       - OCR_ENGINE=tesseract
       - TESSERACT_LANG=eng+kor

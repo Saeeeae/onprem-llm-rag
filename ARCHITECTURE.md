@@ -21,7 +21,6 @@
 │                           │  │  Middleware Layer                  │  │  │
 │                           │  │  - RBAC (Dept + Role)              │  │  │
 │                           │  │  - Audit Logging                   │  │  │
-│                           │  │  - Request Throttling              │  │  │
 │                           │  └────────────────────────────────────┘  │  │
 │                           │  ┌────────────────────────────────────┐  │  │
 │                           │  │  API Endpoints                     │  │  │

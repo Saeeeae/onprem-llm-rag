@@ -1,13 +1,20 @@
 """Qdrant Vector Database Service with RBAC Filtering"""
+import asyncio
+import logging
+from typing import Any, Dict, List, Optional
+from uuid import UUID, uuid4
+
+import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Distance, VectorParams, PointStruct, Filter, FieldCondition,
-    MatchValue, SearchRequest, ScrollRequest
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PointStruct,
+    VectorParams,
 )
-from sentence_transformers import SentenceTransformer
-from typing import List, Dict, Any, Optional
-from uuid import UUID, uuid4
-import logging
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -23,15 +30,27 @@ class QdrantService:
             timeout=30
         )
         self.collection_name = settings.QDRANT_COLLECTION_NAME
-        self.embedding_model = None
+        self.embedding_url = settings.EMBEDDING_URL
         self._initialize_collection()
-    
+
+    def _extract_vector_size(self, collection_info: Any) -> Optional[int]:
+        """Extract vector size from Qdrant collection info."""
+        try:
+            vectors = collection_info.config.params.vectors
+            if isinstance(vectors, dict):
+                # Named vectors; use first size.
+                first_vector = next(iter(vectors.values()), None)
+                return int(getattr(first_vector, "size", 0)) if first_vector else None
+            return int(getattr(vectors, "size", 0))
+        except Exception:
+            return None
+
     def _initialize_collection(self):
         """Initialize Qdrant collection if not exists"""
         try:
             collections = self.client.get_collections().collections
             collection_names = [col.name for col in collections]
-            
+
             if self.collection_name not in collection_names:
                 self.client.create_collection(
                     collection_name=self.collection_name,
@@ -41,38 +60,61 @@ class QdrantService:
                     )
                 )
                 logger.info(f"Created Qdrant collection: {self.collection_name}")
+            else:
+                info = self.client.get_collection(self.collection_name)
+                existing_size = self._extract_vector_size(info)
+                expected_size = settings.QDRANT_VECTOR_SIZE
+                if existing_size and existing_size != expected_size:
+                    raise RuntimeError(
+                        "Qdrant vector size mismatch for collection "
+                        f"'{self.collection_name}': existing={existing_size}, expected={expected_size}. "
+                        "Align embedding model/vector size or recreate the collection."
+                    )
         except Exception as e:
             logger.error(f"Failed to initialize Qdrant collection: {e}")
             raise
-    
-    def _get_embedding_model(self):
-        """Lazy load embedding model"""
-        if self.embedding_model is None:
-            self.embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL)
-        return self.embedding_model
-    
-    def embed_text(self, text: str) -> List[float]:
-        """Generate embedding for text"""
-        model = self._get_embedding_model()
-        embedding = model.encode(
-            text,
-            convert_to_tensor=False,
-            normalize_embeddings=True,
-            show_progress_bar=False
-        )
-        return embedding.tolist()
-    
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings for batch of texts"""
-        model = self._get_embedding_model()
-        embeddings = model.encode(
-            texts,
-            batch_size=settings.EMBEDDING_BATCH_SIZE,
-            convert_to_tensor=False,
-            normalize_embeddings=True,
-            show_progress_bar=False
-        )
-        return embeddings.tolist()
+
+    def _embed_batch_sync(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings from embedding microservice (sync)."""
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                f"{self.embedding_url}/embed",
+                json={
+                    "texts": texts,
+                    "normalize": True,
+                    "batch_size": settings.EMBEDDING_BATCH_SIZE,
+                },
+            )
+            response.raise_for_status()
+            result = response.json()
+
+        embeddings = result.get("embeddings", [])
+        if len(embeddings) != len(texts):
+            raise ValueError(
+                f"Embedding count mismatch: expected {len(texts)}, got {len(embeddings)}"
+            )
+        return embeddings
+
+    async def _embed_batch_async(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings from embedding microservice (async)."""
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{self.embedding_url}/embed",
+                json={
+                    "texts": texts,
+                    "normalize": True,
+                    "batch_size": settings.EMBEDDING_BATCH_SIZE,
+                },
+            )
+            response.raise_for_status()
+            result = response.json()
+
+        embeddings = result.get("embeddings", [])
+        if len(embeddings) != len(texts):
+            raise ValueError(
+                f"Embedding count mismatch: expected {len(texts)}, got {len(embeddings)}"
+            )
+        return embeddings
     
     def upsert_documents(
         self,
@@ -89,8 +131,8 @@ class QdrantService:
         Returns list of Qdrant point IDs.
         """
         try:
-            # Generate embeddings
-            embeddings = self.embed_batch(chunks)
+            # Generate embeddings via embedding microservice
+            embeddings = self._embed_batch_sync(chunks)
             
             # Create points with RBAC metadata
             points = []
@@ -129,7 +171,7 @@ class QdrantService:
             logger.error(f"Failed to upsert documents: {e}")
             raise
     
-    def search_with_filter(
+    async def search_with_filter(
         self,
         query: str,
         user_filter: Dict[str, Any],
@@ -150,7 +192,7 @@ class QdrantService:
         """
         try:
             # Generate query embedding
-            query_embedding = self.embed_text(query)
+            query_embedding = (await self._embed_batch_async([query]))[0]
             
             # Build Qdrant filter
             qdrant_filter = Filter(
@@ -177,12 +219,13 @@ class QdrantService:
             )
             
             # Search
-            search_result = self.client.search(
+            search_result = await asyncio.to_thread(
+                self.client.search,
                 collection_name=self.collection_name,
                 query_vector=query_embedding,
                 query_filter=qdrant_filter,
                 limit=top_k,
-                score_threshold=score_threshold or settings.RAG_SIMILARITY_THRESHOLD
+                score_threshold=score_threshold or settings.RAG_SIMILARITY_THRESHOLD,
             )
             
             # Format results

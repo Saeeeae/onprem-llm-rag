@@ -57,7 +57,7 @@ Answer:"""
 
             # Step 2: Retrieve candidate documents (fetch more for reranking)
             retrieval_k = top_k * 4
-            retrieved_docs = qdrant_service.search_with_filter(
+            retrieved_docs = await qdrant_service.search_with_filter(
                 query=query,
                 user_filter=user_filter,
                 top_k=retrieval_k

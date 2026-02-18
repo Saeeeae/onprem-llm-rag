@@ -10,7 +10,7 @@ from typing import List, Literal, Optional
 import uvicorn
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
-from langchain.text_splitter import (
+from langchain_text_splitters import (
     RecursiveCharacterTextSplitter,
     TokenTextSplitter
 )

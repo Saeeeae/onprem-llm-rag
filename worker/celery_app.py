@@ -8,6 +8,22 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")
 BROKER_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
 RESULT_BACKEND = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+NAS_SYNC_SCHEDULE = os.getenv("NAS_SYNC_SCHEDULE", "0 2 * * *")
+
+
+def parse_cron_schedule(expr: str):
+    """Parse simple 5-field cron expression for celery crontab."""
+    fields = expr.strip().split()
+    if len(fields) != 5:
+        return crontab(hour=2, minute=0)
+    minute, hour, day_of_month, month_of_year, day_of_week = fields
+    return crontab(
+        minute=minute,
+        hour=hour,
+        day_of_month=day_of_month,
+        month_of_year=month_of_year,
+        day_of_week=day_of_week,
+    )
 
 # Create Celery app
 app = Celery(
@@ -38,7 +54,7 @@ app.conf.update(
 app.conf.beat_schedule = {
     "daily-nas-sync": {
         "task": "tasks.nas_sync.sync_nas_documents",
-        "schedule": crontab(hour=2, minute=0),  # Daily at 02:00 AM
+        "schedule": parse_cron_schedule(NAS_SYNC_SCHEDULE),
     },
     "hourly-health-check": {
         "task": "tasks.nas_sync.system_health_check",

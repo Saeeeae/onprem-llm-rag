@@ -3,10 +3,18 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import User
-from app.middleware.auth import get_current_active_user
+from app.middleware.auth import build_qdrant_filter, get_current_active_user
 from app.middleware.logging import log_chat_interaction
-from app.schemas import ChatRequest, ChatResponse, RetrievedDocument
+from app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    RetrievedDocument,
+    SearchDocument,
+    SearchRequest,
+    SearchResponse,
+)
 from app.services.rag_service import rag_service
+from app.services.qdrant_service import qdrant_service
 from uuid import uuid4
 import logging
 
@@ -71,7 +79,7 @@ async def chat(
         return response
     
     except Exception as e:
-        logger.error(f"Chat endpoint error: {e}")
+        logger.exception("Chat endpoint error")
         
         # Log error to audit
         await log_chat_interaction(
@@ -88,7 +96,39 @@ async def chat(
             user_agent=http_request.headers.get("user-agent")
         )
         
-        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Chat request failed")
+
+
+@router.post("/search", response_model=SearchResponse)
+async def search_documents(
+    request_body: SearchRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Retrieve documents only (no LLM generation)."""
+    try:
+        user_filter = build_qdrant_filter(current_user)
+        docs = await qdrant_service.search_with_filter(
+            query=request_body.query,
+            user_filter=user_filter,
+            top_k=request_body.top_k,
+        )
+        valid_docs = [doc for doc in docs if doc.get("document_id")]
+        return SearchResponse(
+            documents=[
+                SearchDocument(
+                    document_id=doc["document_id"],
+                    filename=doc["filename"],
+                    score=doc["score"],
+                    content=doc["content"][:500],
+                    metadata=doc["metadata"],
+                )
+                for doc in valid_docs
+            ],
+            total_found=len(valid_docs),
+        )
+    except Exception:
+        logger.exception("Search endpoint error")
+        raise HTTPException(status_code=500, detail="Search request failed")
 
 
 @router.get("/history")

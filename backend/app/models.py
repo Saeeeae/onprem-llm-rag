@@ -1,5 +1,5 @@
 """SQLAlchemy Database Models"""
-from sqlalchemy import Column, String, Boolean, DateTime, Integer, BigInteger, Text, ARRAY, TIMESTAMP, JSON
+from sqlalchemy import Column, String, Boolean, Integer, BigInteger, Text, ARRAY, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID, INET, JSONB
 from sqlalchemy.sql import func
 import uuid

@@ -1,6 +1,6 @@
 # Celery & Task Queue
 celery[redis]==5.3.4
-redis[hiredis]==5.0.1
+redis[hiredis]==4.6.0
 flower==2.0.1
 
 # Database
@@ -22,11 +22,6 @@ Pillow==10.2.0
 # OCR
 pytesseract==0.3.10
 pdf2image==1.17.0
-
-# Text Processing
-sentence-transformers==2.3.1
-torch==2.1.2
-transformers==4.37.2
 
 # Utilities
 python-dotenv==1.0.0

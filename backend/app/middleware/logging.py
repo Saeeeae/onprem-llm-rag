@@ -1,4 +1,5 @@
 """Audit Logging Middleware"""
+import asyncio
 import time
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -23,38 +24,34 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
         # Calculate latency
         latency_ms = int((time.time() - start_time) * 1000)
         
-        # Log to database (async, non-blocking)
+        # Log to database outside request path.
         if request.url.path.startswith("/api/"):
-            try:
-                await self.log_request(request, response, latency_ms)
-            except Exception as e:
-                logger.error(f"Failed to log audit: {e}")
-        
+            user = getattr(request.state, "user", None)
+            payload = {
+                "user_id": user.id if user else None,
+                "username": user.username if user else "anonymous",
+                "department": user.department if user else None,
+                "role": user.role if user else None,
+                "action_type": "api_request",
+                "latency_ms": latency_ms,
+                "ip_address": request.client.host if request.client else None,
+                "user_agent": request.headers.get("user-agent"),
+                "success": response.status_code < 400,
+                "metadata": {
+                    "method": request.method,
+                    "path": str(request.url.path),
+                    "status_code": response.status_code,
+                },
+            }
+            asyncio.create_task(self.log_request(payload))
+
         return response
-    
-    async def log_request(self, request: Request, response, latency_ms: int):
+
+    async def log_request(self, payload: dict):
         """Log request to database"""
         async with AsyncSessionLocal() as db:
             try:
-                user = getattr(request.state, "user", None)
-                
-                audit_log = AuditLog(
-                    user_id=user.id if user else None,
-                    username=user.username if user else "anonymous",
-                    department=user.department if user else None,
-                    role=user.role if user else None,
-                    action_type="api_request",
-                    latency_ms=latency_ms,
-                    ip_address=request.client.host if request.client else None,
-                    user_agent=request.headers.get("user-agent"),
-                    success=response.status_code < 400,
-                    metadata={
-                        "method": request.method,
-                        "path": str(request.url.path),
-                        "status_code": response.status_code
-                    }
-                )
-                
+                audit_log = AuditLog(**payload)
                 db.add(audit_log)
                 await db.commit()
             except Exception as e:
@@ -87,11 +84,12 @@ async def log_chat_interaction(
             response_text=response,
             retrieved_documents=[
                 {
-                    "document_id": str(doc.get("document_id")),
+                    "document_id": str(doc["document_id"]),
                     "filename": doc.get("filename"),
                     "score": doc.get("score")
                 }
                 for doc in retrieved_documents
+                if doc.get("document_id")
             ],
             token_count=token_count,
             latency_ms=latency_ms,
