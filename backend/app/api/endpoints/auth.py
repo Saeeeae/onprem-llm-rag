@@ -17,6 +17,10 @@ from app.schemas import Token, UserLogin, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# Account lock settings
+MAX_LOGIN_FAILURES = 5
+LOCK_DURATION_MINUTES = 30
+
 
 @router.post("/login", response_model=Token)
 async def login(
@@ -24,13 +28,19 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ):
     """Authenticate user and return JWT."""
-    result = await db.execute(select(User).where(User.username == request_body.username))
+    result = await db.execute(select(User).where(User.email == request_body.email))
     user = result.scalar_one_or_none()
 
-    if user is None or not verify_password(request_body.password, user.hashed_password):
+    if user is None or not verify_password(request_body.password, user.pwd):
+        # Increment failure count if user exists
+        if user is not None:
+            user.failure = (user.failure or 0) + 1
+            if user.failure >= MAX_LOGIN_FAILURES:
+                user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCK_DURATION_MINUTES)
+            await db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
+            detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -40,12 +50,22 @@ async def login(
             detail="Inactive user",
         )
 
+    # Check account lock
+    if user.locked_until and user.locked_until > datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is temporarily locked due to too many failed attempts",
+        )
+
+    # Reset failure count on successful login
+    user.failure = 0
+    user.locked_until = None
     user.last_login = datetime.now(timezone.utc)
-    await db.flush()
+    await db.commit()
 
     expires_delta = timedelta(hours=settings.JWT_EXPIRATION_HOURS)
     access_token = create_access_token(
-        data={"sub": user.username},
+        data={"sub": user.email},
         expires_delta=expires_delta,
     )
 

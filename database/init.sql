@@ -1,156 +1,300 @@
 -- =============================================================================
 -- PostgreSQL Database Schema Initialization
--- On-Premise LLM & RAG System
+-- On-Premise LLM & RAG System v2
 -- =============================================================================
 
--- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- =============================================================================
--- Users Table - RBAC based on Department & Role
+-- 1. Department - Hierarchical organization structure
 -- =============================================================================
-CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    username VARCHAR(100) UNIQUE NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    hashed_password TEXT NOT NULL,
-    full_name VARCHAR(255),
-    department VARCHAR(100) NOT NULL,  -- e.g., 'Clinical_Team', 'Research', 'QA'
-    role VARCHAR(50) NOT NULL,          -- e.g., 'Manager', 'Member', 'Admin'
-    is_active BOOLEAN DEFAULT TRUE,
-    is_superuser BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    last_login TIMESTAMP WITH TIME ZONE
-);
-
-CREATE INDEX idx_users_username ON users(username);
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_department_role ON users(department, role);
-
--- =============================================================================
--- Documents Table - Metadata for indexed documents
--- =============================================================================
-CREATE TABLE IF NOT EXISTS documents (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    filename VARCHAR(500) NOT NULL,
-    file_path TEXT NOT NULL,
-    file_type VARCHAR(50) NOT NULL,     -- 'pdf', 'docx', 'xlsx', 'pptx', 'tif', 'png', 'jpg'
-    file_size BIGINT,                   -- File size in bytes
-    file_hash VARCHAR(64) UNIQUE NOT NULL,  -- SHA-256 hash for duplicate detection
-    department VARCHAR(100) NOT NULL,   -- Access control: which department can access
-    role VARCHAR(50) NOT NULL,          -- Access control: which role can access
-    qdrant_point_ids UUID[],            -- Array of Qdrant vector IDs for this document
-    chunk_count INTEGER DEFAULT 0,
-    indexed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    indexed_by UUID REFERENCES users(id) ON DELETE SET NULL
-);
-
-CREATE INDEX idx_documents_filename ON documents(filename);
-CREATE INDEX idx_documents_file_hash ON documents(file_hash);
-CREATE INDEX idx_documents_department_role ON documents(department, role);
-CREATE INDEX idx_documents_indexed_at ON documents(indexed_at DESC);
-
--- =============================================================================
--- Audit Logs Table - Complete audit trail for compliance
--- =============================================================================
-CREATE TABLE IF NOT EXISTS audit_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    username VARCHAR(100),              -- Denormalized for historical records
-    department VARCHAR(100),            -- User's department at time of query
-    role VARCHAR(50),                   -- User's role at time of query
-    action_type VARCHAR(50) NOT NULL,   -- 'query', 'document_access', 'login', 'admin_action'
-    query_text TEXT,                    -- User's question/prompt
-    response_text TEXT,                 -- LLM's response
-    retrieved_documents JSONB,          -- Array of document IDs and relevance scores
-    token_count INTEGER,                -- Number of tokens used
-    latency_ms INTEGER,                 -- Response time in milliseconds
-    ip_address INET,                    -- User's IP address
-    user_agent TEXT,                    -- Browser/client information
-    success BOOLEAN DEFAULT TRUE,
-    error_message TEXT,
-    metadata JSONB,                     -- Additional context
+CREATE TABLE IF NOT EXISTS department (
+    dept_id SERIAL PRIMARY KEY,
+    parent_dept_id INTEGER REFERENCES department(dept_id) ON DELETE SET NULL,
+    name VARCHAR(100) NOT NULL UNIQUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
-CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at DESC);
-CREATE INDEX idx_audit_logs_action_type ON audit_logs(action_type);
-CREATE INDEX idx_audit_logs_department ON audit_logs(department);
+CREATE INDEX idx_department_parent ON department(parent_dept_id);
 
 -- =============================================================================
--- System Health Logs - Monitor system performance and errors
+-- 2. Roles - Role definitions with authorization levels
 -- =============================================================================
-CREATE TABLE IF NOT EXISTS system_health_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    component VARCHAR(50) NOT NULL,     -- 'vllm', 'qdrant', 'postgres', 'redis', 'celery'
-    status VARCHAR(20) NOT NULL,        -- 'healthy', 'degraded', 'down'
-    metrics JSONB,                      -- GPU usage, memory, queue depth, etc.
-    error_message TEXT,
+CREATE TABLE IF NOT EXISTS roles (
+    role_id SERIAL PRIMARY KEY,
+    role_name VARCHAR(50) NOT NULL UNIQUE,
+    auth_level INTEGER NOT NULL DEFAULT 0,  -- Higher = more access
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =============================================================================
+-- 3. Users - Authentication & RBAC
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS users (
+    user_id SERIAL PRIMARY KEY,
+    pwd TEXT NOT NULL,
+    usr_name VARCHAR(100) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    dept_id INTEGER NOT NULL REFERENCES department(dept_id) ON DELETE RESTRICT,
+    role_id INTEGER NOT NULL REFERENCES roles(role_id) ON DELETE RESTRICT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_login TIMESTAMP WITH TIME ZONE,
+    pwd_day INTEGER DEFAULT 90,         -- Password expiry days
+    failure INTEGER DEFAULT 0,          -- Consecutive login failures
+    locked_until TIMESTAMP WITH TIME ZONE,  -- Account lock expiry
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_dept_id ON users(dept_id);
+CREATE INDEX idx_users_role_id ON users(role_id);
+
+-- =============================================================================
+-- 4. Doc Folder - Hierarchical folder structure
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS doc_folder (
+    folder_id SERIAL PRIMARY KEY,
+    parent_folder_id INTEGER REFERENCES doc_folder(folder_id) ON DELETE CASCADE,
+    folder_name VARCHAR(255) NOT NULL,
+    folder_path TEXT NOT NULL,
+    dept_id INTEGER NOT NULL REFERENCES department(dept_id) ON DELETE RESTRICT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_doc_folder_parent ON doc_folder(parent_folder_id);
+CREATE INDEX idx_doc_folder_dept ON doc_folder(dept_id);
+CREATE INDEX idx_doc_folder_path ON doc_folder(folder_path);
+
+-- =============================================================================
+-- 5. Folder Access - Granular folder-level access control
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS folder_access (
+    access_id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    folder_id INTEGER NOT NULL REFERENCES doc_folder(folder_id) ON DELETE CASCADE,
+    is_recursive BOOLEAN DEFAULT FALSE,     -- Apply to sub-folders
+    granted_by INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+    granted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP WITH TIME ZONE,    -- NULL = permanent
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+CREATE UNIQUE INDEX idx_folder_access_user_folder ON folder_access(user_id, folder_id);
+CREATE INDEX idx_folder_access_folder ON folder_access(folder_id);
+
+-- =============================================================================
+-- 6. Workspace - Collaboration spaces
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS workspace (
+    ws_id SERIAL PRIMARY KEY,
+    ws_name VARCHAR(200) NOT NULL,
+    owner_dept_id INTEGER NOT NULL REFERENCES department(dept_id) ON DELETE RESTRICT,
+    created_by INTEGER NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+CREATE INDEX idx_workspace_owner_dept ON workspace(owner_dept_id);
+CREATE INDEX idx_workspace_created_by ON workspace(created_by);
+
+-- =============================================================================
+-- 7. Workspace Permission
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS ws_permission (
+    permission_id SERIAL PRIMARY KEY,
+    ws_id INTEGER NOT NULL REFERENCES workspace(ws_id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    role VARCHAR(20) NOT NULL DEFAULT 'viewer'  -- 'owner', 'editor', 'viewer'
+);
+
+CREATE UNIQUE INDEX idx_ws_permission_ws_user ON ws_permission(ws_id, user_id);
+
+-- =============================================================================
+-- 8. Workspace Invitation
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS ws_invitation (
+    invite_id SERIAL PRIMARY KEY,
+    ws_id INTEGER NOT NULL REFERENCES workspace(ws_id) ON DELETE CASCADE,
+    inviter_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    invitee_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',  -- 'pending', 'accepted', 'rejected'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    responded_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_ws_invitation_invitee ON ws_invitation(invitee_id, status);
+
+-- =============================================================================
+-- 9. Chat Session
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS chat_session (
+    session_id SERIAL PRIMARY KEY,
+    ws_id INTEGER REFERENCES workspace(ws_id) ON DELETE SET NULL,
+    created_by INTEGER NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+    title VARCHAR(300),
+    session_type VARCHAR(20) NOT NULL DEFAULT 'private',  -- 'private', 'shared'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_chat_session_ws ON chat_session(ws_id);
+CREATE INDEX idx_chat_session_created_by ON chat_session(created_by);
+
+-- =============================================================================
+-- 10. Session Participant - Multi-user collaboration
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS session_participant (
+    id SERIAL PRIMARY KEY,
+    session_id INTEGER NOT NULL REFERENCES chat_session(session_id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    role VARCHAR(20) NOT NULL DEFAULT 'viewer',  -- 'owner', 'editor', 'viewer'
+    joined_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX idx_session_participant_session_user ON session_participant(session_id, user_id);
+
+-- =============================================================================
+-- 11. Document - File metadata with folder & RBAC
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS document (
+    doc_id SERIAL PRIMARY KEY,
+    folder_id INTEGER REFERENCES doc_folder(folder_id) ON DELETE SET NULL,
+    file_name VARCHAR(500) NOT NULL,
+    path TEXT NOT NULL,
+    type VARCHAR(50) NOT NULL,              -- 'pdf', 'docx', 'xlsx', 'pptx', 'tif', 'png', 'jpg'
+    hash VARCHAR(64) UNIQUE NOT NULL,       -- SHA-256 for duplicate detection
+    size BIGINT,
+    dept_id INTEGER NOT NULL REFERENCES department(dept_id) ON DELETE RESTRICT,
+    role_id INTEGER NOT NULL REFERENCES roles(role_id) ON DELETE RESTRICT,
+    total_page_cnt INTEGER DEFAULT 0,
+    language VARCHAR(10) DEFAULT 'ko',
+    version INTEGER DEFAULT 1,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',  -- 'pending', 'processing', 'indexed', 'failed'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_document_folder ON document(folder_id, status);
+CREATE INDEX idx_document_hash ON document(hash);
+CREATE INDEX idx_document_dept_role ON document(dept_id, role_id);
+CREATE INDEX idx_document_status ON document(status);
+CREATE INDEX idx_document_created_at ON document(created_at DESC);
+
+-- =============================================================================
+-- 12. Doc Chunk - Document chunks for RAG
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS doc_chunk (
+    chunk_id SERIAL PRIMARY KEY,
+    doc_id INTEGER NOT NULL REFERENCES document(doc_id) ON DELETE CASCADE,
+    chunk_idx INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    token_cnt INTEGER DEFAULT 0,
+    page_number INTEGER,
+    qdrant_id VARCHAR(64),                  -- Qdrant point ID
+    embed_model VARCHAR(100),               -- e.g., 'intfloat/multilingual-e5-large'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_doc_chunk_doc ON doc_chunk(doc_id, chunk_idx);
+CREATE INDEX idx_doc_chunk_qdrant ON doc_chunk(qdrant_id);
+
+-- =============================================================================
+-- 13. Chat Message
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS chat_msg (
+    msg_id SERIAL PRIMARY KEY,
+    session_id INTEGER NOT NULL REFERENCES chat_session(session_id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+    sender_type VARCHAR(10) NOT NULL,       -- 'user', 'assistant', 'system'
+    message TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_chat_msg_session ON chat_msg(session_id, created_at);
+
+-- =============================================================================
+-- 14. Message Reference - RAG source tracking
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS msg_ref (
+    ref_id SERIAL PRIMARY KEY,
+    msg_id INTEGER NOT NULL REFERENCES chat_msg(msg_id) ON DELETE CASCADE,
+    doc_id INTEGER REFERENCES document(doc_id) ON DELETE SET NULL,
+    chunk_id INTEGER REFERENCES doc_chunk(chunk_id) ON DELETE SET NULL,
+    web_url VARCHAR(2048),
+    relevance_score FLOAT
+);
+
+CREATE INDEX idx_msg_ref_msg ON msg_ref(msg_id);
+
+-- =============================================================================
+-- 15. Access Request - Workspace access requests
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS access_request (
+    req_id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    target_ws_id INTEGER NOT NULL REFERENCES workspace(ws_id) ON DELETE CASCADE,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',  -- 'pending', 'approved', 'rejected'
+    approve_id INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX idx_access_request_status ON access_request(status);
+
+-- =============================================================================
+-- 16. Audit Log - Universal activity tracking
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS audit_log (
+    log_id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+    action_type VARCHAR(50) NOT NULL,       -- 'login', 'query', 'doc_upload', 'admin_action', etc.
+    target_type VARCHAR(50),                -- 'document', 'workspace', 'user', 'folder', etc.
+    target_id INTEGER,
+    description TEXT,
+    ip_address VARCHAR(45),                 -- IPv4/IPv6
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_audit_log_user ON audit_log(user_id);
+CREATE INDEX idx_audit_log_action ON audit_log(action_type);
+CREATE INDEX idx_audit_log_created_at ON audit_log(created_at DESC);
+
+-- =============================================================================
+-- 17. System Job - Background job scheduler
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS system_job (
+    job_id SERIAL PRIMARY KEY,
+    job_name VARCHAR(200) NOT NULL,
+    job_type VARCHAR(50) NOT NULL,          -- 'nas_sync', 'reindex', 'cleanup', etc.
+    status VARCHAR(20) NOT NULL DEFAULT 'idle',  -- 'idle', 'running', 'completed', 'failed'
+    config_json JSONB,
+    last_run_at TIMESTAMP WITH TIME ZONE,
+    next_run_at TIMESTAMP WITH TIME ZONE,
+    last_error TEXT
+);
+
+CREATE INDEX idx_system_job_type ON system_job(job_type);
+
+-- =============================================================================
+-- 18. System Health - Service health monitoring
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS system_health (
+    id SERIAL PRIMARY KEY,
+    service_name VARCHAR(50) NOT NULL,      -- 'vllm', 'qdrant', 'postgres', 'redis', 'celery'
+    status VARCHAR(20) NOT NULL,            -- 'healthy', 'degraded', 'down'
+    response_time_ms FLOAT,
+    metadata_json JSONB,
     checked_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_system_health_component ON system_health_logs(component);
-CREATE INDEX idx_system_health_checked_at ON system_health_logs(checked_at DESC);
+CREATE INDEX idx_system_health_service ON system_health(service_name);
+CREATE INDEX idx_system_health_checked_at ON system_health(checked_at DESC);
 
 -- =============================================================================
--- Document Processing Queue - Track background processing status
--- =============================================================================
-CREATE TABLE IF NOT EXISTS document_processing_queue (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    file_path TEXT NOT NULL,
-    file_name VARCHAR(500) NOT NULL,
-    department VARCHAR(100) NOT NULL,
-    role VARCHAR(50) NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'pending',  -- 'pending', 'processing', 'completed', 'failed'
-    celery_task_id VARCHAR(255),       -- Celery task UUID
-    error_message TEXT,
-    retry_count INTEGER DEFAULT 0,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    started_at TIMESTAMP WITH TIME ZONE,
-    completed_at TIMESTAMP WITH TIME ZONE
-);
-
-CREATE INDEX idx_document_queue_status ON document_processing_queue(status);
-CREATE INDEX idx_document_queue_created_at ON document_processing_queue(created_at DESC);
-
--- =============================================================================
--- NAS Sync Logs - Track daily sync operations
--- =============================================================================
-CREATE TABLE IF NOT EXISTS nas_sync_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    sync_started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    sync_completed_at TIMESTAMP WITH TIME ZONE,
-    files_scanned INTEGER DEFAULT 0,
-    files_added INTEGER DEFAULT 0,
-    files_updated INTEGER DEFAULT 0,
-    files_failed INTEGER DEFAULT 0,
-    status VARCHAR(20) DEFAULT 'running',  -- 'running', 'completed', 'failed'
-    error_message TEXT,
-    metadata JSONB
-);
-
-CREATE INDEX idx_nas_sync_logs_started_at ON nas_sync_logs(sync_started_at DESC);
-
--- =============================================================================
--- Celery Beat Schedules (if using DatabaseScheduler)
--- =============================================================================
-CREATE TABLE IF NOT EXISTS celery_periodic_tasks (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) UNIQUE NOT NULL,
-    task VARCHAR(255) NOT NULL,
-    crontab_schedule VARCHAR(100),      -- Cron format: '0 2 * * *'
-    enabled BOOLEAN DEFAULT TRUE,
-    last_run_at TIMESTAMP WITH TIME ZONE,
-    total_run_count INTEGER DEFAULT 0,
-    date_changed TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- =============================================================================
--- Triggers for updated_at timestamps
+-- Triggers for updated_at
 -- =============================================================================
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -163,53 +307,62 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_documents_updated_at BEFORE UPDATE ON documents
+CREATE TRIGGER update_document_updated_at BEFORE UPDATE ON document
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_doc_chunk_updated_at BEFORE UPDATE ON doc_chunk
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_chat_session_updated_at BEFORE UPDATE ON chat_session
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- =============================================================================
--- Initial Data
+-- Initial Seed Data
 -- =============================================================================
--- For security, no default admin user is seeded.
--- Create the first admin manually after deployment.
+INSERT INTO department (name) VALUES ('Admin'), ('Research'), ('Clinical_Team'), ('QA')
+    ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO roles (role_name, auth_level) VALUES
+    ('Admin', 100),
+    ('Manager', 50),
+    ('Member', 10),
+    ('Viewer', 1)
+    ON CONFLICT (role_name) DO NOTHING;
 
 -- =============================================================================
 -- Views for Analytics
 -- =============================================================================
 CREATE OR REPLACE VIEW user_activity_summary AS
 SELECT
-    u.id,
-    u.username,
-    u.department,
-    u.role,
-    COUNT(al.id) AS total_queries,
-    MAX(al.created_at) AS last_activity,
-    AVG(al.latency_ms) AS avg_latency_ms,
-    SUM(al.token_count) AS total_tokens_used
+    u.user_id,
+    u.usr_name,
+    d.name AS department,
+    r.role_name,
+    COUNT(al.log_id) AS total_actions,
+    COUNT(al.log_id) FILTER (WHERE al.action_type = 'query') AS total_queries,
+    MAX(al.created_at) AS last_activity
 FROM users u
-LEFT JOIN audit_logs al
-    ON u.id = al.user_id
-    AND al.action_type = 'query'
-GROUP BY u.id, u.username, u.department, u.role;
+JOIN department d ON u.dept_id = d.dept_id
+JOIN roles r ON u.role_id = r.role_id
+LEFT JOIN audit_log al ON u.user_id = al.user_id
+GROUP BY u.user_id, u.usr_name, d.name, r.role_name;
 
-CREATE OR REPLACE VIEW document_access_stats AS
+CREATE OR REPLACE VIEW document_stats AS
 SELECT
-    d.id,
-    d.filename,
-    d.department,
-    d.role,
-    d.indexed_at,
-    COUNT(DISTINCT al.user_id) FILTER (WHERE al.user_id IS NOT NULL) AS unique_users_accessed,
-    COUNT(al.id) AS total_accesses
-FROM documents d
-LEFT JOIN audit_logs al
-    ON al.action_type = 'query'
-    AND al.retrieved_documents IS NOT NULL
-    AND EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements(al.retrieved_documents) AS doc_ref
-        WHERE (doc_ref ->> 'document_id')::UUID = d.id
-    )
-GROUP BY d.id, d.filename, d.department, d.role, d.indexed_at;
+    doc.doc_id,
+    doc.file_name,
+    d.name AS department,
+    r.role_name,
+    df.folder_name,
+    doc.status,
+    COUNT(dc.chunk_id) AS chunk_count,
+    doc.created_at
+FROM document doc
+JOIN department d ON doc.dept_id = d.dept_id
+JOIN roles r ON doc.role_id = r.role_id
+LEFT JOIN doc_folder df ON doc.folder_id = df.folder_id
+LEFT JOIN doc_chunk dc ON doc.doc_id = dc.doc_id
+GROUP BY doc.doc_id, doc.file_name, d.name, r.role_name, df.folder_name, doc.status, doc.created_at;
 
 -- =============================================================================
 -- Grant Permissions

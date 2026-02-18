@@ -1,8 +1,9 @@
 """Chat/RAG Endpoints - Handles 50 concurrent requests"""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app.database import get_db
-from app.models import User
+from app.models import User, ChatSession, ChatMsg, MsgRef
 from app.middleware.auth import build_qdrant_filter, get_current_active_user
 from app.middleware.logging import log_chat_interaction
 from app.schemas import (
@@ -32,7 +33,7 @@ async def chat(
 ):
     """
     RAG Chat Endpoint
-    
+
     - Retrieves relevant documents based on user's RBAC (Department + Role)
     - Generates answer using vLLM
     - Logs interaction to audit database
@@ -47,10 +48,10 @@ async def chat(
             temperature=request_body.temperature or 0.7,
             max_tokens=request_body.max_tokens or 1024
         )
-        
+
         # Prepare response
         conversation_id = request_body.conversation_id or str(uuid4())
-        
+
         response = ChatResponse(
             response=result["response"],
             conversation_id=conversation_id,
@@ -62,7 +63,7 @@ async def chat(
             latency_ms=result["latency_ms"],
             model_name="vLLM"
         )
-        
+
         # Log to audit database (async, non-blocking)
         await log_chat_interaction(
             db=db,
@@ -75,12 +76,12 @@ async def chat(
             ip_address=http_request.client.host if http_request.client else None,
             user_agent=http_request.headers.get("user-agent")
         )
-        
+
         return response
-    
+
     except Exception as e:
         logger.exception("Chat endpoint error")
-        
+
         # Log error to audit
         await log_chat_interaction(
             db=db,
@@ -95,7 +96,7 @@ async def chat(
             ip_address=http_request.client.host if http_request.client else None,
             user_agent=http_request.headers.get("user-agent")
         )
-        
+
         raise HTTPException(status_code=500, detail="Chat request failed")
 
 
@@ -137,28 +138,42 @@ async def get_chat_history(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get user's chat history"""
-    from sqlalchemy import select
-    from app.models import AuditLog
-    
+    """Get user's chat sessions and recent messages"""
     result = await db.execute(
-        select(AuditLog)
-        .where(AuditLog.user_id == current_user.id)
-        .where(AuditLog.action_type == "query")
-        .order_by(AuditLog.created_at.desc())
+        select(ChatSession)
+        .where(ChatSession.created_by == current_user.user_id)
+        .order_by(ChatSession.updated_at.desc())
         .limit(limit)
     )
-    
-    logs = result.scalars().all()
-    
-    return [
-        {
-            "id": str(log.id),
-            "query": log.query_text,
-            "response": log.response_text,
-            "created_at": log.created_at.isoformat(),
-            "latency_ms": log.latency_ms,
-            "success": log.success
-        }
-        for log in logs
-    ]
+
+    sessions = result.scalars().all()
+
+    history = []
+    for session in sessions:
+        # Get the last few messages per session
+        msgs_result = await db.execute(
+            select(ChatMsg)
+            .where(ChatMsg.session_id == session.session_id)
+            .order_by(ChatMsg.created_at.desc())
+            .limit(2)
+        )
+        messages = msgs_result.scalars().all()
+
+        history.append({
+            "session_id": session.session_id,
+            "title": session.title,
+            "session_type": session.session_type,
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+            "messages": [
+                {
+                    "msg_id": msg.msg_id,
+                    "sender_type": msg.sender_type,
+                    "message": msg.message[:200],
+                    "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                }
+                for msg in reversed(messages)
+            ]
+        })
+
+    return history

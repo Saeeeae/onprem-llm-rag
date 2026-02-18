@@ -1,38 +1,36 @@
 """Pydantic Schemas for Request/Response validation"""
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from uuid import UUID
 
 
 # =============================================================================
 # User Schemas
 # =============================================================================
-class UserBase(BaseModel):
-    username: str
+class UserCreate(BaseModel):
+    usr_name: str
     email: str
-    full_name: Optional[str] = None
-    department: str
-    role: str
-
-
-class UserCreate(UserBase):
     password: str
+    dept_id: int
+    role_id: int
 
 
-class UserResponse(UserBase):
-    id: UUID
+class UserResponse(BaseModel):
+    user_id: int
+    usr_name: str
+    email: str
+    dept_id: int
+    role_id: int
     is_active: bool
-    is_superuser: bool
     created_at: datetime
     last_login: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True
 
 
 class UserLogin(BaseModel):
-    username: str
+    email: str
     password: str
 
 
@@ -55,7 +53,7 @@ class ChatRequest(BaseModel):
 
 
 class RetrievedDocument(BaseModel):
-    document_id: UUID
+    document_id: int
     filename: str
     score: float
     rerank_score: Optional[float] = None
@@ -78,7 +76,7 @@ class SearchRequest(BaseModel):
 
 
 class SearchDocument(BaseModel):
-    document_id: UUID
+    document_id: int
     filename: str
     score: float
     content: str
@@ -94,22 +92,23 @@ class SearchResponse(BaseModel):
 # Document Schemas
 # =============================================================================
 class DocumentMetadata(BaseModel):
-    id: UUID
-    filename: str
-    file_type: str
-    file_size: int
-    department: str
-    role: str
-    chunk_count: int
-    indexed_at: datetime
-    
+    doc_id: int
+    file_name: str
+    type: str
+    size: Optional[int] = None
+    dept_id: int
+    role_id: int
+    status: str
+    created_at: datetime
+
     class Config:
         from_attributes = True
 
 
 class DocumentUploadRequest(BaseModel):
-    department: str
-    role: str
+    dept_id: int
+    role_id: int
+    folder_id: Optional[int] = None
     overwrite_existing: bool = False
 
 
@@ -117,33 +116,31 @@ class DocumentUploadRequest(BaseModel):
 # Admin Schemas
 # =============================================================================
 class SystemHealthResponse(BaseModel):
-    component: str
-    status: str  # 'healthy', 'degraded', 'down'
-    metrics: Optional[Dict[str, Any]] = None
-    last_check: datetime
+    service_name: str
+    status: str
+    response_time_ms: Optional[float] = None
+    metadata_json: Optional[Dict[str, Any]] = None
+    checked_at: datetime
 
 
 class AuditLogResponse(BaseModel):
-    id: UUID
-    username: str
-    department: str
-    role: str
+    log_id: int
+    user_id: Optional[int] = None
     action_type: str
-    query_text: Optional[str]
+    target_type: Optional[str] = None
+    target_id: Optional[int] = None
+    description: Optional[str] = None
+    ip_address: Optional[str] = None
     created_at: datetime
-    success: bool
-    latency_ms: Optional[int]
-    
+
     class Config:
         from_attributes = True
 
 
 class UserActivityStats(BaseModel):
-    total_queries: int
+    total_actions: int
     unique_users: int
-    avg_latency_ms: float
-    total_tokens_used: int
-    top_departments: List[Dict[str, int]]
+    top_departments: List[Dict[str, Any]]
 
 
 class DocumentStats(BaseModel):

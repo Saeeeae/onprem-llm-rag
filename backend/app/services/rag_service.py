@@ -53,7 +53,7 @@ Answer:"""
         try:
             # Step 1: Build RBAC filter
             user_filter = build_qdrant_filter(user)
-            logger.info(f"User {user.username} ({user.department}/{user.role}) querying: {query[:100]}...")
+            logger.info(f"User {user.usr_name} (dept={user.dept_id}/role={user.role_id}) querying: {query[:100]}...")
 
             # Step 2: Retrieve candidate documents (fetch more for reranking)
             retrieval_k = top_k * 4

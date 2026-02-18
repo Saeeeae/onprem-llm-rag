@@ -8,11 +8,12 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+BACKEND_DIR = ROOT_DIR / "backend"
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
-from src.core.db import Base
-import src.models  # noqa: F401
+from app.database import Base
+import app.models  # noqa: F401
 
 config = context.config
 

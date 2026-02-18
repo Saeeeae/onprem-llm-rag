@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 
 
 revision = "20260216_0001"
@@ -44,6 +45,7 @@ def upgrade() -> None:
         sa.Column("last_login", sa.DateTime(timezone=True), nullable=True),
         sa.Column("pwd_day", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("failure", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("locked_until", sa.DateTime(timezone=True), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.ForeignKeyConstraint(["dept_id"], ["department.dept_id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["role_id"], ["roles.role_id"], ondelete="RESTRICT"),
@@ -271,7 +273,7 @@ def upgrade() -> None:
         sa.Column("job_name", sa.String(length=120), nullable=False),
         sa.Column("job_type", sa.String(length=80), nullable=False),
         sa.Column("status", sa.String(length=30), nullable=False, server_default=sa.text("'idle'")),
-        sa.Column("config_json", sa.Text(), nullable=True),
+        sa.Column("config_json", JSONB(), nullable=True),
         sa.Column("last_run_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("next_run_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_error", sa.Text(), nullable=True),
@@ -284,7 +286,7 @@ def upgrade() -> None:
         sa.Column("service_name", sa.String(length=80), nullable=False),
         sa.Column("status", sa.String(length=30), nullable=False),
         sa.Column("response_time_ms", sa.Float(), nullable=True),
-        sa.Column("metadata_json", sa.Text(), nullable=True),
+        sa.Column("metadata_json", JSONB(), nullable=True),
         sa.Column("checked_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
     )
     op.create_index("ix_system_health_service_name", "system_health", ["service_name"], unique=False)

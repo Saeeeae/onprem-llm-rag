@@ -43,7 +43,7 @@ def load_existing_hashes() -> Dict[str, str]:
         engine = get_db_engine()
         with engine.connect() as conn:
             rows = conn.execute(
-                text("SELECT file_path, file_hash FROM documents")
+                text("SELECT path, hash FROM document")
             ).all()
         return {row[0]: row[1] for row in rows}
     except Exception as exc:
@@ -67,40 +67,41 @@ def scan_nas_directory(nas_path: str) -> list:
     """
     files = []
     nas_root = Path(nas_path)
-    
+
     if not nas_root.exists():
         logger.error(f"NAS path does not exist: {nas_path}")
         return []
-    
+
     for file_path in nas_root.rglob("*"):
         if file_path.is_file() and file_path.suffix.lower() in SUPPORTED_EXTENSIONS:
             files.append(str(file_path))
-    
+
     return files
 
 
-def extract_access_from_path(file_path: str, nas_root: str) -> Tuple[str, str]:
+def extract_access_from_path(file_path: str, nas_root: str) -> Tuple[int, int]:
     """
-    Extract department and role from path.
-    Expected layout: /mnt/nas/<department>/<role>/<filename>
+    Extract dept_id and role_id from path.
+    Expected layout: /mnt/nas/<dept_id>/<role_id>/<filename>
+    Falls back to (1, 1) if structure doesn't match.
     """
     try:
         relative_path = Path(file_path).relative_to(nas_root)
         parts = relative_path.parts
         if len(parts) >= 3:
-            return parts[0], parts[1]
+            return int(parts[0]), int(parts[1])
         if len(parts) >= 2:
-            return parts[0], "All"
-    except Exception:
+            return int(parts[0]), 1
+    except (ValueError, Exception):
         pass
-    return "Unknown", "All"
+    return 1, 1
 
 
 @app.task(name="tasks.nas_sync.sync_nas_documents", bind=True)
 def sync_nas_documents(self: Task):
     """
     Daily NAS Sync Task
-    
+
     Scans NAS directory for new/modified documents and processes them:
     1. Detect new or modified files (by hash)
     2. Extract text (OCR for images)
@@ -109,13 +110,11 @@ def sync_nas_documents(self: Task):
     5. Log to PostgreSQL
     """
     NAS_MOUNT_PATH = os.getenv("NAS_MOUNT_PATH", "/mnt/nas")
-    
+
     logger.info(f"Starting NAS sync from {NAS_MOUNT_PATH}")
-    
-    # Create sync log entry
-    # (In production, use proper database connection)
+
     sync_start = datetime.utcnow()
-    
+
     try:
         # Scan directory
         files = scan_nas_directory(NAS_MOUNT_PATH)
@@ -127,7 +126,7 @@ def sync_nas_documents(self: Task):
         files_updated = 0
         files_failed = 0
         files_unchanged = 0
-        
+
         for file_path in files:
             try:
                 file_hash = get_file_hash(file_path)
@@ -136,14 +135,14 @@ def sync_nas_documents(self: Task):
                     files_unchanged += 1
                     continue
 
-                department, role = extract_access_from_path(file_path, NAS_MOUNT_PATH)
+                dept_id, role_id = extract_access_from_path(file_path, NAS_MOUNT_PATH)
 
                 # Queue document processing task
                 process_document.delay(
                     file_path=file_path,
                     file_hash=file_hash,
-                    department=department,
-                    role=role
+                    dept_id=dept_id,
+                    role_id=role_id
                 )
 
                 if existing_hash:
@@ -151,20 +150,20 @@ def sync_nas_documents(self: Task):
                 else:
                     files_added += 1
                 logger.info(f"Queued: {file_path}")
-            
+
             except Exception as e:
                 logger.error(f"Failed to process {file_path}: {e}")
                 files_failed += 1
-        
+
         sync_end = datetime.utcnow()
         duration = (sync_end - sync_start).total_seconds()
-        
+
         logger.info(
             f"NAS sync completed in {duration}s. "
             f"Scanned: {files_scanned}, Added: {files_added}, "
             f"Updated: {files_updated}, Unchanged: {files_unchanged}, Failed: {files_failed}"
         )
-        
+
         return {
             "status": "completed",
             "files_scanned": files_scanned,
@@ -174,7 +173,7 @@ def sync_nas_documents(self: Task):
             "files_failed": files_failed,
             "duration_seconds": duration
         }
-    
+
     except Exception as e:
         logger.error(f"NAS sync failed: {e}")
         return {
@@ -187,8 +186,8 @@ def sync_nas_documents(self: Task):
 def system_health_check():
     """Hourly system health check"""
     logger.info("Performing system health check")
-    
+
     # Check vLLM, Qdrant, PostgreSQL, Redis
-    # Log to system_health_logs table
-    
+    # Log to system_health table
+
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}

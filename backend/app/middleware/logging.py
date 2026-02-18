@@ -1,5 +1,6 @@
 """Audit Logging Middleware"""
 import asyncio
+import json
 import time
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -14,40 +15,36 @@ logger = logging.getLogger(__name__)
 
 class AuditLoggingMiddleware(BaseHTTPMiddleware):
     """Middleware to log all requests for audit purposes"""
-    
+
     async def dispatch(self, request: Request, call_next: Callable):
         start_time = time.time()
-        
+
         # Process request
         response = await call_next(request)
-        
+
         # Calculate latency
         latency_ms = int((time.time() - start_time) * 1000)
-        
+
         # Log to database outside request path.
         if request.url.path.startswith("/api/"):
             user = getattr(request.state, "user", None)
             payload = {
-                "user_id": user.id if user else None,
-                "username": user.username if user else "anonymous",
-                "department": user.department if user else None,
-                "role": user.role if user else None,
+                "user_id": user.user_id if user else None,
                 "action_type": "api_request",
-                "latency_ms": latency_ms,
-                "ip_address": request.client.host if request.client else None,
-                "user_agent": request.headers.get("user-agent"),
-                "success": response.status_code < 400,
-                "metadata": {
+                "target_type": "endpoint",
+                "description": json.dumps({
                     "method": request.method,
                     "path": str(request.url.path),
                     "status_code": response.status_code,
-                },
+                    "latency_ms": latency_ms,
+                }),
+                "ip_address": request.client.host if request.client else None,
             }
-            asyncio.create_task(self.log_request(payload))
+            asyncio.create_task(self._log_request(payload))
 
         return response
 
-    async def log_request(self, payload: dict):
+    async def _log_request(self, payload: dict):
         """Log request to database"""
         async with AsyncSessionLocal() as db:
             try:
@@ -74,31 +71,24 @@ async def log_chat_interaction(
 ):
     """Log chat/RAG interaction to audit database"""
     try:
+        description = json.dumps({
+            "query": query[:500],
+            "response_preview": response[:200] if response else None,
+            "retrieved_doc_count": len(retrieved_documents),
+            "token_count": token_count,
+            "latency_ms": latency_ms,
+            "success": success,
+            "error": error_message,
+        }, ensure_ascii=False)
+
         audit_log = AuditLog(
-            user_id=user.id,
-            username=user.username,
-            department=user.department,
-            role=user.role,
-            action_type="query",
-            query_text=query,
-            response_text=response,
-            retrieved_documents=[
-                {
-                    "document_id": str(doc["document_id"]),
-                    "filename": doc.get("filename"),
-                    "score": doc.get("score")
-                }
-                for doc in retrieved_documents
-                if doc.get("document_id")
-            ],
-            token_count=token_count,
-            latency_ms=latency_ms,
+            user_id=user.user_id,
+            action_type="chat_query",
+            target_type="rag",
+            description=description,
             ip_address=ip_address,
-            user_agent=user_agent,
-            success=success,
-            error_message=error_message
         )
-        
+
         db.add(audit_log)
         await db.commit()
     except Exception as e:
